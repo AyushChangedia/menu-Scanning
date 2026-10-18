@@ -40,6 +40,8 @@ export function ResultsView({ id }: { id: string }) {
   const [moodFlavors, setMoodFlavors] = React.useState<FlavorId[] | null>(null);
   const [moodSpice, setMoodSpice] = React.useState<number | null>(null);
   const [open, setOpen] = React.useState<ScoredDish | null>(null);
+  const [query, setQuery] = React.useState("");
+  const [filters, setFilters] = React.useState<MenuFilters>(DEFAULT_FILTERS);
 
   const flavors = moodFlavors ?? prefs.flavors;
   const spice = moodSpice ?? prefs.spiceTolerance;
@@ -50,6 +52,7 @@ export function ResultsView({ id }: { id: string }) {
     [scan, prefs, feedback, flavors, spice],
   );
   const forYou = React.useMemo(() => pickForYou(ranked), [ranked]);
+  const menuCount = React.useMemo(() => applyFilters(ranked, filters, "").length, [ranked, filters]);
 
   // Keep the open sheet in sync with re-ranking (score changes as mood changes).
   const openEntry = open ? (ranked.find((entry) => entry.dish.id === open.dish.id) ?? open) : null;
@@ -118,7 +121,7 @@ export function ResultsView({ id }: { id: string }) {
             onChange={setTab}
             options={[
               { value: "for-you", label: "For you" },
-              { value: "full", label: <>Full menu <span className="tabular text-xs opacity-70">{scan.dishes.length}</span></> },
+              { value: "full", label: <>Full menu <span className="tabular text-xs opacity-70">{menuCount}</span></> },
             ]}
           />
 
@@ -133,7 +136,15 @@ export function ResultsView({ id }: { id: string }) {
               {tab === "for-you" ? (
                 <ForYou label={forYou.label} items={forYou.items} pending={pendingPages} onOpen={setOpen} />
               ) : (
-                <FullMenu ranked={ranked} pending={pendingPages} onOpen={setOpen} />
+                <FullMenu
+                  ranked={ranked}
+                  pending={pendingPages}
+                  onOpen={setOpen}
+                  query={query}
+                  onQuery={setQuery}
+                  filters={filters}
+                  onFilters={setFilters}
+                />
               )}
             </motion.div>
           </AnimatePresence>
@@ -388,7 +399,7 @@ function ForYou({
     <div className="space-y-3">
       <div className="flex items-baseline justify-between px-1">
         <h2 className="text-lg font-bold tracking-tight text-white">{label}</h2>
-        {label === "Closest matches" ? <span className="text-xs text-subtle">Nothing scored 60%+</span> : null}
+        {label === "Closest matches" ? <span className="text-xs text-subtle">Fewer than 3 dishes scored 60%+</span> : null}
       </div>
       {items.map((entry, rank) => (
         <PickCard key={entry.dish.id} entry={entry} rank={rank} onOpen={() => onOpen(entry)} />
@@ -406,16 +417,24 @@ function FullMenu({
   ranked,
   pending,
   onOpen,
+  query,
+  onQuery: setQuery,
+  filters,
+  onFilters: setFilters,
 }: {
   ranked: ScoredDish[];
   pending: number;
   onOpen: (entry: ScoredDish) => void;
+  query: string;
+  onQuery: (value: string) => void;
+  filters: MenuFilters;
+  onFilters: (value: MenuFilters) => void;
 }) {
-  const [query, setQuery] = React.useState("");
-  const [filters, setFilters] = React.useState<MenuFilters>(DEFAULT_FILTERS);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
 
   const visible = React.useMemo(() => applyFilters(ranked, filters, query), [ranked, filters, query]);
+  const hiddenDrinks =
+    filters.hideDrinks && !filters.courses.includes("drink") ? ranked.filter((entry) => entry.dish.course === "drink").length : 0;
   const groups = filters.sort === "best" ? groupBySection(visible) : [{ section: "", items: visible }];
   const activeCount = activeFilterCount(filters);
   let index = 0;
@@ -446,6 +465,15 @@ function FullMenu({
           ) : null}
         </button>
       </div>
+
+      {hiddenDrinks > 0 ? (
+        <p className="flex items-center justify-between gap-3 px-1 text-[13px] text-subtle">
+          <span>{plural(hiddenDrinks, "drink")} hidden</span>
+          <button type="button" onClick={() => setFilters({ ...filters, hideDrinks: false })} className="h-9 rounded-full px-2 font-semibold text-primary-300 hover:text-primary-200">
+            Show drinks
+          </button>
+        </p>
+      ) : null}
 
       {visible.length === 0 ? (
         <EmptyState

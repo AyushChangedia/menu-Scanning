@@ -64,29 +64,29 @@ const STEPS: Step[] = [
 
 export function OnboardingView() {
   const router = useRouter();
-  const { prefs, setPrefs, setOnboarded, hydrated } = useAppState();
+  const { prefs, setPrefs, setOnboarded } = useAppState();
   const [step, setStep] = React.useState(0);
   const [direction, setDirection] = React.useState(1);
   const [draft, setDraft] = React.useState<TastePreference>(prefs);
-
-  // Pick up stored prefs once localStorage has been read.
-  React.useEffect(() => {
-    if (hydrated) setDraft(prefs);
-    // Only on hydration — later edits live in the draft until Finish.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated]);
+  // A double tap on Continue would otherwise skip a step.
+  const busy = React.useRef(false);
 
   const current = STEPS[step];
   const last = step === STEPS.length - 1;
   const canContinue = step !== 0 || draft.flavors.length > 0;
 
   function go(next: number) {
+    if (busy.current) return;
+    busy.current = true;
+    window.setTimeout(() => (busy.current = false), 350);
     setDirection(next > step ? 1 : -1);
     setStep(next);
     window.scrollTo({ top: 0 });
   }
 
   function finish() {
+    if (busy.current) return;
+    busy.current = true;
     setPrefs(draft);
     setOnboarded(true);
     toast.success("You're all set — go scan a menu");

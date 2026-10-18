@@ -32,9 +32,16 @@ export function ScanPickerProvider({ children }: { children: React.ReactNode }) 
   const galleryRef = React.useRef<HTMLInputElement>(null);
   const [sheetOpen, setSheetOpen] = React.useState(false);
 
+  // Navigating away (including browser Back) closes the sheet.
+  React.useEffect(() => setSheetOpen(false), [pathname]);
+
   async function handleFiles(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
+    const picked = Array.from(event.target.files ?? []);
     event.target.value = "";
+    if (picked.length === 0) return;
+
+    const files = picked.filter((file) => file.type.startsWith("image/"));
+    for (const file of picked) if (!file.type.startsWith("image/")) toast.error(`${file.name} isn't a photo.`);
     if (files.length === 0) return;
 
     const room = MAX_PAGES - draft.length;
@@ -46,10 +53,6 @@ export function ScanPickerProvider({ children }: { children: React.ReactNode }) 
 
     const pages: DraftPage[] = [];
     for (const file of files.slice(0, room)) {
-      if (!file.type.startsWith("image/")) {
-        toast.error(`${file.name} isn't a photo.`);
-        continue;
-      }
       try {
         const preview = await makeThumbnail(file);
         pages.push({ id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 7)}`, file, preview });

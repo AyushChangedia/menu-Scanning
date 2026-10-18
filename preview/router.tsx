@@ -4,9 +4,10 @@
  * Stand-in for `next/navigation` in the single-file preview build.
  *
  * The preview runs inside a locked-down frame where real URL routing isn't
- * available, so the current route lives in React state. When the frame allows
- * `history.pushState`, each navigation also gets a history entry so the
- * browser's back gesture works; when it doesn't, an in-memory stack does.
+ * available, so routes live in React state as a list of entries plus the
+ * current position. When the frame allows `history.pushState`, every entry
+ * also gets a browser history entry (state = its position), so the back and
+ * forward gestures work; otherwise the in-app Back button walks the list.
  */
 
 import * as React from "react";
@@ -18,73 +19,99 @@ type RouterValue = {
   back: () => void;
 };
 
+type Nav = { entries: string[]; index: number };
+
 const RouterContext = React.createContext<RouterValue | null>(null);
 
-/** Bare-token deep links: #history, #taste, #onboarding, #scan-little-napoli … */
-function initialPath(): string {
-  try {
-    const token = window.location.hash.replace(/^#/, "");
-    if (!token || token === "home") return "/";
-    if (token.startsWith("scan-")) return `/scan/${token.slice(5)}`;
-    return `/${token}`;
-  } catch {
-    return "/";
-  }
+/** Bare-token deep links: #history, #taste, #signup, #onboarding … */
+export function pathFromHash(hash: string): string {
+  const token = hash.replace(/^#/, "");
+  if (!token || token === "home") return "/";
+  if (token.startsWith("scan-")) return `/scan/${token.slice(5)}`;
+  return `/${token}`;
+}
+
+/** The reverse, used for link hrefs so "open in new tab" lands somewhere sane. */
+export function hashFromPath(path: string): string {
+  if (path === "/") return "#home";
+  if (path.startsWith("/scan/")) return `#scan-${path.slice(6)}`;
+  return `#${path.replace(/^\//, "")}`;
+}
+
+function scrollTop() {
+  // "instant" overrides the app's smooth scroll-behaviour on <html>.
+  window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
 }
 
 export function RouterProvider({ children }: { children: React.ReactNode }) {
-  const [stack, setStack] = React.useState<string[]>(() => [initialPath()]);
+  const [nav, setNav] = React.useState<Nav>(() => ({
+    entries: [typeof window === "undefined" ? "/" : pathFromHash(window.location.hash)],
+    index: 0,
+  }));
+  const navRef = React.useRef(nav);
+  navRef.current = nav;
   const historyWorks = React.useRef(false);
 
   React.useEffect(() => {
     try {
-      window.history.replaceState({ forkcastDepth: 0 }, "");
+      window.history.replaceState({ forkcastIndex: 0 }, "");
       historyWorks.current = true;
     } catch {
       historyWorks.current = false;
     }
     const onPop = (event: PopStateEvent) => {
-      const depth = (event.state as { forkcastDepth?: number } | null)?.forkcastDepth;
-      if (typeof depth === "number") setStack((prev) => prev.slice(0, depth + 1));
+      const index = (event.state as { forkcastIndex?: number } | null)?.forkcastIndex;
+      if (typeof index !== "number") return;
+      setNav((prev) => (index < prev.entries.length ? { ...prev, index } : prev));
+      scrollTop();
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const value = React.useMemo<RouterValue>(() => {
-    const pathname = stack[stack.length - 1];
+    const pathname = nav.entries[nav.index];
     return {
       pathname,
       push: (path) => {
-        setStack((prev) => {
-          const next = [...prev, path];
-          if (historyWorks.current) {
-            try {
-              window.history.pushState({ forkcastDepth: next.length - 1 }, "");
-            } catch {
-              historyWorks.current = false;
-            }
+        const current = navRef.current;
+        if (path === current.entries[current.index]) {
+          scrollTop();
+          return;
+        }
+        const next: Nav = { entries: [...current.entries.slice(0, current.index + 1), path], index: current.index + 1 };
+        if (historyWorks.current) {
+          try {
+            window.history.pushState({ forkcastIndex: next.index }, "");
+          } catch {
+            historyWorks.current = false;
           }
-          return next;
-        });
-        window.scrollTo({ top: 0 });
+        }
+        setNav(next);
+        scrollTop();
       },
       replace: (path) => {
-        setStack((prev) => [...prev.slice(0, -1), path]);
-        window.scrollTo({ top: 0 });
+        setNav((prev) => {
+          const entries = [...prev.entries];
+          entries[prev.index] = path;
+          return { ...prev, entries };
+        });
+        scrollTop();
       },
       back: () => {
-        if (stack.length <= 1) {
-          setStack(["/"]);
+        const current = navRef.current;
+        if (current.index === 0) {
+          if (current.entries[0] !== "/") setNav({ entries: ["/"], index: 0 });
         } else if (historyWorks.current) {
           window.history.back();
+          return;
         } else {
-          setStack((prev) => prev.slice(0, -1));
+          setNav({ ...current, index: current.index - 1 });
         }
-        window.scrollTo({ top: 0 });
+        scrollTop();
       },
     };
-  }, [stack]);
+  }, [nav]);
 
   return <RouterContext.Provider value={value}>{children}</RouterContext.Provider>;
 }

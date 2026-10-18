@@ -55,7 +55,7 @@ export function ScanProgress({ scan }: { scan: Scan }) {
           </div>
           <div className="relative mt-3 h-5 overflow-hidden text-sm text-muted-foreground">
             <AnimatePresence mode="wait">
-              <motion.p key={line} initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -14, opacity: 0 }} transition={{ duration: 0.3 }}>
+              <motion.p className="truncate" key={line} initial={{ y: 14, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -14, opacity: 0 }} transition={{ duration: 0.3 }}>
                 {LINES[line]}
               </motion.p>
             </AnimatePresence>

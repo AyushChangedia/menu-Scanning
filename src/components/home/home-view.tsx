@@ -18,11 +18,11 @@ import { ALLERGY_LABEL, DIET_META, FLAVOR_LABEL, HEAVINESS_META, spiceWord } fro
 import { FLAVOR_ICON } from "@/lib/taste-icons";
 
 export function HomeView() {
-  const { user } = useAppState();
+  const { account } = useAppState();
   const [eyebrow, setEyebrow] = React.useState<string | null>(null);
   React.useEffect(() => setEyebrow(mealEyebrow()), []);
 
-  const firstName = user.name.split(" ")[0];
+  const firstName = account?.name.split(" ")[0] ?? "there";
 
   return (
     <div className="space-y-8">
@@ -75,12 +75,15 @@ function ScanHero() {
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-2.5">
-              <Button size="lg" onClick={openCamera}>
-                <Camera /> Scan menu
+            {/* Two columns from 360px; stacked on the narrowest phones. */}
+            <div className="mt-5 grid grid-cols-1 gap-2.5 min-[360px]:grid-cols-2">
+              <Button size="lg" className="min-w-0 gap-1.5 px-3 text-sm" onClick={openCamera}>
+                <Camera />
+                Scan menu
               </Button>
-              <Button size="lg" variant="secondary" onClick={openGallery}>
-                <Images /> Upload photos
+              <Button size="lg" variant="secondary" className="min-w-0 gap-1.5 px-3 text-sm" onClick={openGallery}>
+                <Images />
+                Upload photos
               </Button>
             </div>
 
@@ -223,7 +226,7 @@ function TasteCard() {
 // ---------------------------------------------------------------------------
 
 function RecentScans() {
-  const { scans, hydrated } = useAppState();
+  const { scans } = useAppState();
   const recent = scans.slice(0, 3);
   if (recent.length === 0) return null;
 
@@ -247,7 +250,7 @@ function RecentScans() {
                 <p className="truncate text-[15px] font-semibold text-white">{scan.restaurantName ?? "Untitled menu"}</p>
                 <p className="truncate text-[13px] text-muted-foreground">
                   {scan.status === "processing" ? "Decoding…" : plural(scan.dishes.length, "dish", "dishes")}
-                  {hydrated ? ` · ${formatWhen(scan.createdAt)}` : null}
+                  {` · ${formatWhen(scan.createdAt)}`}
                 </p>
               </div>
               <ChevronRight className="size-4 shrink-0 text-subtle" />

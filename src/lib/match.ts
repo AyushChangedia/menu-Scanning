@@ -176,7 +176,8 @@ export function scoreDish(
 
   // --- Score ---------------------------------------------------------------
   let score = T.base;
-  const liked: FlavorId[] = mood?.flavors?.length ? mood.flavors : prefs.flavors;
+  // Tonight's chips replace the saved flavours, even when every chip is off.
+  const liked: FlavorId[] = mood?.flavors ?? prefs.flavors;
   const tolerance = mood?.spice ?? prefs.spiceTolerance;
 
   if (liked.length > 0) {
@@ -261,8 +262,13 @@ export function scoreDish(
 
   const reasons = [...flavorReasons.slice(0, Math.max(0, T.maxReasons - tail.length)), ...tail];
 
+  const final = Math.round(Math.min(100, Math.max(0, score)));
+  if (final !== Math.round(score)) {
+    breakdown.push({ label: final === 100 ? "Capped at 100" : "Floored at 0", delta: final - Math.round(score) });
+  }
+
   return {
-    score: Math.round(Math.min(100, Math.max(0, score))),
+    score: final,
     excluded: excludedReason !== null,
     excludedReason,
     reasons,

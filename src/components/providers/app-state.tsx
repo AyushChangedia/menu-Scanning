@@ -2,30 +2,49 @@
 
 import * as React from "react";
 
-import { LIVE_SCAN_PAGES, PAN_ASIAN_PAGE_2 } from "@/lib/mock/fixtures";
 import {
-  DAILY_PAGE_LIMIT,
-  DEFAULT_FEEDBACK,
-  DEFAULT_PREFS,
-  MOCK_USER,
-  initialScans,
-  uniqueCuisines,
-} from "@/lib/mock/data";
+  emailIssue,
+  hashPassword,
+  istDay,
+  nameIssue,
+  newId,
+  normaliseEmail,
+  passwordIssue,
+  toPublic,
+  verifyPassword,
+  type Account,
+  type PublicAccount,
+} from "@/lib/accounts";
+import { LIVE_SCAN_PAGES } from "@/lib/mock/fixtures";
+import { DAILY_PAGE_LIMIT, EMPTY_PREFS, uniqueCuisines } from "@/lib/mock/data";
 import { mergeDuplicates, toDishes } from "@/lib/merge";
+import { readJSON, removeKey, storageIsPersistent, writeJSON } from "@/lib/storage";
 import { sleep } from "@/lib/utils";
 import type { Dish, Feedback, Scan, TastePreference } from "@/lib/types";
 
 /**
- * Front-end state for the UI build. Taste preferences and ratings persist in
- * localStorage; scans live in memory and are "decoded" by a simulated scanner
- * that returns fixture pages on a timer — no network, no AI.
+ * Front-end state. Accounts (email + hashed password), each account's taste,
+ * ratings and scans are kept on this device. Scans are "decoded" by a
+ * simulated scanner that returns fixture menus — no network, no AI.
  */
 
 export type DraftPage = { id: string; file: File; preview: string };
+export type AuthResult = { ok: true } | { ok: false; error: string; field?: string };
+
+type AccountData = { prefs: TastePreference; feedback: Feedback[]; onboarded: boolean; scans: Scan[] };
 
 type AppState = {
-  user: typeof MOCK_USER & { setName: (name: string) => void };
-  hydrated: boolean;
+  status: "loading" | "signed-out" | "signed-in";
+  account: PublicAccount | null;
+  persistent: boolean;
+  signUp: (input: { name: string; email: string; password: string }) => Promise<AuthResult>;
+  signIn: (input: { email: string; password: string }) => Promise<AuthResult>;
+  signOut: () => void;
+  updateName: (name: string) => AuthResult;
+  changePassword: (current: string, next: string) => Promise<AuthResult>;
+  resetPassword: (email: string, next: string) => Promise<AuthResult>;
+  deleteAccount: () => void;
+
   onboarded: boolean;
   setOnboarded: (value: boolean) => void;
   prefs: TastePreference;
@@ -46,100 +65,248 @@ type AppState = {
 
 const AppStateContext = React.createContext<AppState | null>(null);
 
-const STORAGE_KEY = "forkcast:ui-state:v1";
+const ACCOUNTS_KEY = "forkcast:accounts:v1";
+const SESSION_KEY = "forkcast:session:v1";
+const LEGACY_KEY = "forkcast:ui-state:v1";
+const dataKey = (id: string) => `forkcast:data:v1:${id}`;
 const MAX_CONCURRENT_PAGES = 3;
 
-type Persisted = { prefs: TastePreference; feedback: Feedback[]; onboarded: boolean; name: string };
+const EMPTY_DATA: AccountData = { prefs: EMPTY_PREFS, feedback: [], onboarded: false, scans: [] };
 
-function readStorage(): Partial<Persisted> {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Partial<Persisted>) : {};
-  } catch {
-    return {};
-  }
+function readAccounts(): Record<string, Account> {
+  return readJSON<Record<string, Account>>(ACCOUNTS_KEY) ?? {};
+}
+
+/** Scans interrupted by a reload can't resume: mark their unread pages failed. */
+function settleInterrupted(scans: Scan[]): Scan[] {
+  return scans.map((scan) => {
+    if (scan.status !== "processing") return scan;
+    const pages = scan.pages.map((page) =>
+      page.status === "pending" ? { ...page, status: "failed" as const, error: "Not analysed — re-upload" } : page,
+    );
+    return { ...scan, pages, status: pages.some((page) => page.status === "done") ? "partial" : "failed" };
+  });
+}
+
+function loadData(id: string): AccountData {
+  const stored = readJSON<Partial<AccountData>>(dataKey(id));
+  return {
+    prefs: stored?.prefs ?? EMPTY_PREFS,
+    feedback: stored?.feedback ?? [],
+    onboarded: stored?.onboarded ?? false,
+    scans: settleInterrupted(stored?.scans ?? []),
+  };
+}
+
+/** blob: URLs die with the page, so they're never saved. */
+function forStorage(data: AccountData): AccountData {
+  return {
+    ...data,
+    scans: data.scans.map((scan) => (scan.thumbnail?.startsWith("blob:") ? { ...scan, thumbnail: null } : scan)),
+  };
 }
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
-  const [hydrated, setHydrated] = React.useState(false);
-  const [prefs, setPrefsState] = React.useState<TastePreference>(DEFAULT_PREFS);
-  const [feedback, setFeedback] = React.useState<Feedback[]>(DEFAULT_FEEDBACK);
-  const [onboarded, setOnboarded] = React.useState(true);
-  const [name, setName] = React.useState(MOCK_USER.name);
-  const [scans, setScans] = React.useState<Scan[]>(initialScans);
+  const [status, setStatus] = React.useState<AppState["status"]>("loading");
+  const [account, setAccount] = React.useState<PublicAccount | null>(null);
+  const [data, setData] = React.useState<AccountData>(EMPTY_DATA);
   const [draft, setDraft] = React.useState<DraftPage[]>([]);
-  const [usedToday, setUsedToday] = React.useState(6);
+  const [persistent, setPersistent] = React.useState(true);
+  const accountRef = React.useRef<PublicAccount | null>(null);
+  accountRef.current = account;
 
+  // Restore the session once, on the client.
   React.useEffect(() => {
-    const stored = readStorage();
-    if (stored.prefs) setPrefsState(stored.prefs);
-    if (stored.feedback) setFeedback(stored.feedback);
-    if (typeof stored.onboarded === "boolean") setOnboarded(stored.onboarded);
-    if (stored.name) setName(stored.name);
-    setHydrated(true);
+    removeKey(LEGACY_KEY); // the old demo profile
+    setPersistent(storageIsPersistent());
+    const session = readJSON<{ id: string }>(SESSION_KEY);
+    const found = session ? Object.values(readAccounts()).find((entry) => entry.id === session.id) : undefined;
+    if (found) {
+      setAccount(toPublic(found));
+      setData(loadData(found.id));
+      setStatus("signed-in");
+    } else {
+      setStatus("signed-out");
+    }
   }, []);
 
+  // Save the signed-in account's data whenever it changes.
   React.useEffect(() => {
-    if (!hydrated) return;
-    try {
-      const payload: Persisted = { prefs, feedback, onboarded, name };
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // Private mode or blocked storage: the UI still works for this visit.
+    if (status === "signed-in" && account) writeJSON(dataKey(account.id), forStorage(data));
+  }, [status, account, data]);
+
+  const enter = React.useCallback((found: Account) => {
+    writeJSON(SESSION_KEY, { id: found.id });
+    setAccount(toPublic(found));
+    setData(loadData(found.id));
+    setDraft([]);
+    setStatus("signed-in");
+  }, []);
+
+  const signUp = React.useCallback<AppState["signUp"]>(
+    async ({ name, email, password }) => {
+      const problem =
+        (nameIssue(name) && { field: "name", error: nameIssue(name)! }) ||
+        (emailIssue(email) && { field: "email", error: emailIssue(email)! }) ||
+        (passwordIssue(password) && { field: "password", error: passwordIssue(password)! });
+      if (problem) return { ok: false, ...problem };
+
+      const key = normaliseEmail(email);
+      const accounts = readAccounts();
+      if (accounts[key]) {
+        return { ok: false, field: "email", error: "An account with that email already exists on this device. Sign in instead." };
+      }
+      try {
+        const { salt, hash } = await hashPassword(password);
+        const created: Account = { id: newId(), name: name.trim(), email: key, salt, hash, createdAt: new Date().toISOString() };
+        writeJSON(ACCOUNTS_KEY, { ...accounts, [key]: created });
+        writeJSON(dataKey(created.id), EMPTY_DATA);
+        enter(created);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "Couldn't create the account." };
+      }
+    },
+    [enter],
+  );
+
+  const signIn = React.useCallback<AppState["signIn"]>(
+    async ({ email, password }) => {
+      if (emailIssue(email)) return { ok: false, field: "email", error: emailIssue(email)! };
+      if (!password) return { ok: false, field: "password", error: "Enter your password" };
+      const found = readAccounts()[normaliseEmail(email)];
+      try {
+        // Hash even when the email is unknown, so both failures take as long.
+        const valid = found
+          ? await verifyPassword(password, found.salt, found.hash)
+          : (await hashPassword(password), false);
+        if (!found || !valid) return { ok: false, error: "That email and password don't match." };
+        enter(found);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "Couldn't sign in." };
+      }
+    },
+    [enter],
+  );
+
+  const signOut = React.useCallback(() => {
+    removeKey(SESSION_KEY);
+    setAccount(null);
+    setData(EMPTY_DATA);
+    setDraft([]);
+    setStatus("signed-out");
+  }, []);
+
+  const updateName = React.useCallback<AppState["updateName"]>((name) => {
+    const current = accountRef.current;
+    if (!current) return { ok: false, error: "You're signed out." };
+    if (nameIssue(name)) return { ok: false, field: "name", error: nameIssue(name)! };
+    const accounts = readAccounts();
+    const stored = accounts[current.email];
+    if (!stored) return { ok: false, error: "This account no longer exists." };
+    const updated = { ...stored, name: name.trim() };
+    writeJSON(ACCOUNTS_KEY, { ...accounts, [current.email]: updated });
+    setAccount(toPublic(updated));
+    return { ok: true };
+  }, []);
+
+  const changePassword = React.useCallback<AppState["changePassword"]>(async (currentPassword, next) => {
+    const current = accountRef.current;
+    if (!current) return { ok: false, error: "You're signed out." };
+    const accounts = readAccounts();
+    const stored = accounts[current.email];
+    if (!stored) return { ok: false, error: "This account no longer exists." };
+    if (!(await verifyPassword(currentPassword, stored.salt, stored.hash))) {
+      return { ok: false, field: "current", error: "That current password isn't right." };
     }
-  }, [hydrated, prefs, feedback, onboarded, name]);
+    if (passwordIssue(next)) return { ok: false, field: "next", error: passwordIssue(next)! };
+    if (next === currentPassword) return { ok: false, field: "next", error: "Choose a password you haven't used here before." };
+    writeJSON(ACCOUNTS_KEY, { ...accounts, [current.email]: { ...stored, ...(await hashPassword(next)) } });
+    return { ok: true };
+  }, []);
+
+  const resetPassword = React.useCallback<AppState["resetPassword"]>(async (email, next) => {
+    if (emailIssue(email)) return { ok: false, field: "email", error: emailIssue(email)! };
+    const accounts = readAccounts();
+    const key = normaliseEmail(email);
+    if (!accounts[key]) return { ok: false, field: "email", error: "There's no account with that email on this device." };
+    if (passwordIssue(next)) return { ok: false, field: "password", error: passwordIssue(next)! };
+    writeJSON(ACCOUNTS_KEY, { ...accounts, [key]: { ...accounts[key], ...(await hashPassword(next)) } });
+    return { ok: true };
+  }, []);
+
+  const deleteAccount = React.useCallback(() => {
+    const current = accountRef.current;
+    if (!current) return;
+    const accounts = readAccounts();
+    delete accounts[current.email];
+    writeJSON(ACCOUNTS_KEY, accounts);
+    removeKey(dataKey(current.id));
+    signOut();
+  }, [signOut]);
+
+  // --- Account data --------------------------------------------------------
 
   const setPrefs = React.useCallback<AppState["setPrefs"]>((update) => {
-    setPrefsState((prev) => (typeof update === "function" ? update(prev) : update));
+    setData((prev) => ({ ...prev, prefs: typeof update === "function" ? update(prev.prefs) : update }));
   }, []);
 
+  const setOnboarded = React.useCallback((value: boolean) => setData((prev) => ({ ...prev, onboarded: value })), []);
+
   const rateDish = React.useCallback((dish: Dish, verdict: 1 | -1) => {
-    setFeedback((prev) => [
-      { slug: dish.slug, verdict, name: dish.name, cuisine: dish.cuisine, createdAt: new Date().toISOString() },
-      ...prev.filter((entry) => entry.slug !== dish.slug),
-    ]);
+    setData((prev) => ({
+      ...prev,
+      feedback: [
+        { slug: dish.slug, verdict, name: dish.name, cuisine: dish.cuisine, createdAt: new Date().toISOString() },
+        ...prev.feedback.filter((entry) => entry.slug !== dish.slug),
+      ],
+    }));
   }, []);
 
   const removeFeedback = React.useCallback((slug: string) => {
-    setFeedback((prev) => prev.filter((entry) => entry.slug !== slug));
+    setData((prev) => ({ ...prev, feedback: prev.feedback.filter((entry) => entry.slug !== slug) }));
   }, []);
 
-  const updateScan = React.useCallback((id: string, update: (scan: Scan) => Scan) => {
-    setScans((prev) => prev.map((scan) => (scan.id === id ? update(scan) : scan)));
+  const setScans = React.useCallback((update: (scans: Scan[]) => Scan[]) => {
+    setData((prev) => ({ ...prev, scans: update(prev.scans) }));
   }, []);
+
+  const updateScan = React.useCallback(
+    (id: string, update: (scan: Scan) => Scan) => setScans((scans) => scans.map((scan) => (scan.id === id ? update(scan) : scan))),
+    [setScans],
+  );
 
   const renameScan = React.useCallback(
     (id: string, next: string) => updateScan(id, (scan) => ({ ...scan, restaurantName: next.trim() || null })),
     [updateScan],
   );
 
-  const deleteScan = React.useCallback((id: string) => {
-    let removed: { scan: Scan; index: number } | null = null;
-    setScans((prev) => {
-      const index = prev.findIndex((scan) => scan.id === id);
-      if (index === -1) return prev;
-      removed = { scan: prev[index], index };
-      return prev.filter((scan) => scan.id !== id);
-    });
-    return () => {
-      const restore = removed;
-      if (!restore) return;
-      setScans((prev) => {
-        if (prev.some((scan) => scan.id === restore.scan.id)) return prev;
-        const next = [...prev];
-        next.splice(Math.min(restore.index, next.length), 0, restore.scan);
-        return next;
+  const deleteScan = React.useCallback(
+    (id: string) => {
+      let removed: { scan: Scan; index: number } | null = null;
+      setScans((scans) => {
+        const index = scans.findIndex((scan) => scan.id === id);
+        if (index === -1) return scans;
+        removed = { scan: scans[index], index };
+        return scans.filter((scan) => scan.id !== id);
       });
-    };
-  }, []);
+      return () => {
+        const restore = removed;
+        if (!restore) return;
+        setScans((scans) => {
+          if (scans.some((scan) => scan.id === restore.scan.id)) return scans;
+          const next = [...scans];
+          next.splice(Math.min(restore.index, next.length), 0, restore.scan);
+          return next;
+        });
+      };
+    },
+    [setScans],
+  );
 
-  const addDraft = React.useCallback((pages: DraftPage[]) => {
-    setDraft((prev) => [...prev, ...pages].slice(0, 6));
-  }, []);
-
-  const removeDraft = React.useCallback((id: string) => {
-    setDraft((prev) => prev.filter((page) => page.id !== id));
-  }, []);
+  const addDraft = React.useCallback((pages: DraftPage[]) => setDraft((prev) => [...prev, ...pages].slice(0, 6)), []);
+  const removeDraft = React.useCallback((id: string) => setDraft((prev) => prev.filter((page) => page.id !== id)), []);
 
   /** Marks one page finished and folds its dishes into the scan. */
   const completePage = React.useCallback(
@@ -147,9 +314,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       const page = LIVE_SCAN_PAGES[index % LIVE_SCAN_PAGES.length];
       updateScan(scanId, (scan) => {
         const dishes: Dish[] = mergeDuplicates([...scan.dishes, ...toDishes(scanId, index, page.dishes)]);
-        const pages = scan.pages.map((entry) =>
-          entry.index === index ? { index, status: "done" as const } : entry,
-        );
+        const pages = scan.pages.map((entry) => (entry.index === index ? { index, status: "done" as const } : entry));
         const finished = pages.every((entry) => entry.status !== "pending");
         return {
           ...scan,
@@ -157,11 +322,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           pages,
           restaurantName: scan.restaurantName ?? page.restaurant_name,
           cuisines: uniqueCuisines(dishes.map((dish) => dish.cuisine)),
-          status: finished
-            ? pages.some((entry) => entry.status === "failed")
-              ? "partial"
-              : "ready"
-            : scan.status,
+          status: finished ? (pages.some((entry) => entry.status === "failed") ? "partial" : "ready") : scan.status,
         };
       });
     },
@@ -173,7 +334,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     const id = `scan-${Date.now().toString(36)}`;
     const pageCount = draft.length;
 
-    setScans((prev) => [
+    setScans((scans) => [
       {
         id,
         restaurantName: null,
@@ -185,10 +346,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         pages: Array.from({ length: pageCount }, (_, index) => ({ index, status: "pending" as const })),
         dishes: [],
       },
-      ...prev,
+      ...scans,
     ]);
     setDraft([]);
-    setUsedToday((value) => value + pageCount);
 
     // At most three pages in flight, like the real pipeline.
     const queue = Array.from({ length: pageCount }, (_, index) => index);
@@ -204,7 +364,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     });
 
     return id;
-  }, [draft, completePage]);
+  }, [draft, completePage, setScans]);
 
   const retryPage = React.useCallback(
     (scanId: string, index: number) => {
@@ -213,39 +373,34 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         status: "processing",
         pages: scan.pages.map((entry) => (entry.index === index ? { index, status: "pending" as const } : entry)),
       }));
-      void sleep(2400).then(() => {
-        // The demo's failed page is Bamboo Lantern's second page.
-        if (scanId === "bamboo-lantern") {
-          updateScan(scanId, (scan) => {
-            const dishes = mergeDuplicates([...scan.dishes, ...toDishes(scanId, index, PAN_ASIAN_PAGE_2.dishes)]);
-            return {
-              ...scan,
-              dishes,
-              cuisines: uniqueCuisines(dishes.map((dish) => dish.cuisine)),
-              status: "ready",
-              pages: scan.pages.map((entry) => (entry.index === index ? { index, status: "done" as const } : entry)),
-            };
-          });
-        } else {
-          completePage(scanId, index);
-        }
-      });
+      void sleep(2400).then(() => completePage(scanId, index));
     },
     [updateScan, completePage],
   );
 
+  const today = istDay(new Date());
+  const used = data.scans.filter((scan) => istDay(scan.createdAt) === today).reduce((sum, scan) => sum + scan.pageCount, 0);
+
   const value = React.useMemo<AppState>(
     () => ({
-      user: { ...MOCK_USER, name, setName },
-      hydrated,
-      onboarded,
+      status,
+      account,
+      persistent,
+      signUp,
+      signIn,
+      signOut,
+      updateName,
+      changePassword,
+      resetPassword,
+      deleteAccount,
+      onboarded: data.onboarded,
       setOnboarded,
-      prefs,
+      prefs: data.prefs,
       setPrefs,
-      feedback,
+      feedback: data.feedback,
       rateDish,
       removeFeedback,
-      scans,
+      scans: data.scans,
       renameScan,
       deleteScan,
       draft,
@@ -253,9 +408,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       removeDraft,
       startScan,
       retryPage,
-      usage: { used: usedToday, limit: DAILY_PAGE_LIMIT },
+      usage: { used, limit: DAILY_PAGE_LIMIT },
     }),
-    [name, hydrated, onboarded, prefs, setPrefs, feedback, rateDish, removeFeedback, scans, renameScan, deleteScan, draft, addDraft, removeDraft, startScan, retryPage, usedToday],
+    [status, account, persistent, signUp, signIn, signOut, updateName, changePassword, resetPassword, deleteAccount, data, setOnboarded, setPrefs, rateDish, removeFeedback, renameScan, deleteScan, draft, addDraft, removeDraft, startScan, retryPage, used],
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

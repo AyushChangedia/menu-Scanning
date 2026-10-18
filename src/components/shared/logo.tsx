@@ -29,7 +29,7 @@ export function LogoTile({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "gradient-border-static grid size-11 shrink-0 place-items-center rounded-2xl shadow-glow-sm",
+        "grid size-11 shrink-0 place-items-center rounded-2xl border border-white/[0.10] bg-black shadow-glow-sm",
         className,
       )}
     >

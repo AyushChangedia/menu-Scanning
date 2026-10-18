@@ -4,7 +4,7 @@
 
 import * as React from "react";
 
-import { useRouter } from "./router";
+import { hashFromPath, useRouter } from "./router";
 
 type LinkProps = Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> & {
   href: string;
@@ -22,10 +22,12 @@ const Link = React.forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   return (
     <a
       ref={ref}
-      href={href}
+      href={hashFromPath(href)}
       onClick={(event) => {
         onClick?.(event);
         if (event.defaultPrevented) return;
+        // Let modified clicks (new tab / window) use the hash link.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
         event.preventDefault();
         if (replace) router.replace(href);
         else router.push(href);

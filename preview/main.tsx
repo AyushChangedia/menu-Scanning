@@ -49,17 +49,22 @@ function Screen() {
   );
 }
 
-/** One line saying this is a preview with sample data; dismissible. */
+let noteDismissed = false;
+
+/** One line saying what this preview is; stays dismissed for the visit. */
 function PreviewNote() {
-  const [hidden, setHidden] = React.useState(false);
+  const [hidden, setHidden] = React.useState(noteDismissed);
   if (hidden) return null;
   return (
     <div className="mb-6 flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.03] py-2 pl-3.5 pr-1.5 text-[13px] text-muted-foreground">
       <span className="size-1.5 shrink-0 rounded-full bg-cyan" aria-hidden />
-      <span className="min-w-0 flex-1">UI preview with sample menus. Photos never leave your phone.</span>
+      <span className="min-w-0 flex-1">Preview: menus are decoded from sample data. Nothing leaves your browser.</span>
       <button
         type="button"
-        onClick={() => setHidden(true)}
+        onClick={() => {
+          noteDismissed = true;
+          setHidden(true);
+        }}
         className="grid size-9 shrink-0 place-items-center rounded-full text-subtle hover:text-white"
         aria-label="Dismiss"
       >
@@ -70,6 +75,12 @@ function PreviewNote() {
 }
 
 document.documentElement.classList.add("dark");
+
+// Load Inter without blocking first paint; the fallback stack shows meanwhile.
+const font = document.createElement("link");
+font.rel = "stylesheet";
+font.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap";
+document.head.appendChild(font);
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

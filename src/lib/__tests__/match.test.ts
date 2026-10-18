@@ -108,3 +108,22 @@ describe("dislike exceptions", () => {
     assert.equal(mentions("kalamata olives, feta", "olives"), true);
   });
 });
+
+describe("mood and score breakdown", () => {
+  it("treats an empty mood as 'no flavour preference tonight'", () => {
+    const user = prefs({ flavors: ["garlicky"] });
+    const dish = byName("Spaghetti Aglio, Olio e Peperoncino");
+    assert.ok(scoreDish(dish, user).breakdown.some((line) => line.label === "Flavour fit"));
+    assert.ok(!scoreDish(dish, user, [], { flavors: [] }).breakdown.some((line) => line.label === "Flavour fit"));
+  });
+
+  it("explains a capped score so the lines add up", () => {
+    const dish = byName("Korean Fire Chicken");
+    const user = prefs({ flavors: ["spicy"], spiceTolerance: 5, heaviness: "indulgent" });
+    const loved = [{ slug: dish.slug, verdict: 1 as const, name: dish.name, cuisine: dish.cuisine, createdAt: "2026-10-01T00:00:00Z" }];
+    const result = scoreDish(dish, user, loved);
+    assert.equal(result.score, 100);
+    assert.ok(result.breakdown.some((line) => line.label === "Capped at 100"));
+    assert.equal(50 + result.breakdown.reduce((sum, line) => sum + line.delta, 0), result.score);
+  });
+});

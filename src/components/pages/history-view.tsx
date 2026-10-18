@@ -19,7 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogBody } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { pickForYou, rankDishes } from "@/lib/match";
 import { formatWhen, plural } from "@/lib/format";
@@ -91,6 +91,7 @@ export function HistoryView() {
           >
             <DialogHeader>
               <DialogTitle>Rename scan</DialogTitle>
+              <DialogDescription>Use the restaurant&apos;s name so you can find it later.</DialogDescription>
             </DialogHeader>
             <DialogBody>
               <Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Restaurant name" maxLength={60} aria-label="Restaurant name" />
@@ -109,7 +110,7 @@ export function HistoryView() {
 }
 
 function HistoryRow({ scan, onRename, onDelete }: { scan: Scan; onRename: () => void; onDelete: () => void }) {
-  const { prefs, feedback, hydrated } = useAppState();
+  const { prefs, feedback } = useAppState();
   const top = React.useMemo(() => pickForYou(rankDishes(scan.dishes, prefs, feedback)).items[0], [scan.dishes, prefs, feedback]);
 
   return (
@@ -126,7 +127,7 @@ function HistoryRow({ scan, onRename, onDelete }: { scan: Scan; onRename: () => 
             ) : null}
           </div>
           <p className="tabular truncate text-[13px] text-muted-foreground">
-            {hydrated ? `${formatWhen(scan.createdAt)} · ` : null}
+            {`${formatWhen(scan.createdAt)} · `}
             {plural(scan.dishes.length, "dish", "dishes")}
           </p>
           {top ? (

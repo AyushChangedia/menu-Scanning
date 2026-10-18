@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ChevronRight, KeyRound, LogOut, Mail, RotateCcw, ScanLine, Trash2, User } from "lucide-react";
@@ -15,28 +14,56 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from "@/components/ui/input";
 import { initials } from "@/lib/utils";
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function Field({ label, htmlFor, error, children }: { label: string; htmlFor: string; error?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <label htmlFor={htmlFor} className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </label>
       {children}
+      {error ? (
+        <p className="text-xs text-[#F87171]" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 export function ProfileView() {
   const router = useRouter();
-  const { user, usage, setOnboarded } = useAppState();
-  const [name, setName] = React.useState(user.name);
+  const { account, usage, persistent, updateName, changePassword, signOut, deleteAccount, setOnboarded } = useAppState();
+  const [name, setName] = React.useState(account?.name ?? "");
+  const [nameError, setNameError] = React.useState<string>();
+  const [passwordErrors, setPasswordErrors] = React.useState<Partial<Record<"current" | "next", string>>>({});
+  const [savingPassword, setSavingPassword] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [confirm, setConfirm] = React.useState("");
 
-  React.useEffect(() => setName(user.name), [user.name]);
+  React.useEffect(() => setName(account?.name ?? ""), [account?.name]);
+
+  if (!account) return null;
 
   const remaining = Math.max(0, usage.limit - usage.used);
-  const percent = (usage.used / usage.limit) * 100;
+  const percent = Math.min(100, (usage.used / usage.limit) * 100);
+
+  async function submitPassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setPasswordErrors({});
+    setSavingPassword(true);
+    const result = await changePassword(String(form.get("current") ?? ""), String(form.get("next") ?? ""));
+    setSavingPassword(false);
+    if (result.ok) {
+      formElement.reset();
+      toast.success("Password changed");
+    } else if (result.field === "current" || result.field === "next") {
+      setPasswordErrors({ [result.field]: result.error });
+    } else {
+      toast.error(result.error);
+    }
+  }
 
   return (
     <div className="space-y-7">
@@ -44,15 +71,14 @@ export function ProfileView() {
 
       <section className="glass flex items-center gap-4 rounded-3xl p-5">
         <span className="grid size-16 shrink-0 place-items-center rounded-full bg-brand-gradient text-xl font-bold text-white shadow-glow">
-          {initials(user.name, user.email)}
+          {initials(account.name, account.email)}
         </span>
         <div className="min-w-0">
-          <p className="truncate text-lg font-bold text-white">{user.name}</p>
-          <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+          <p className="truncate text-lg font-bold text-white">{account.name}</p>
+          <p className="truncate text-sm text-muted-foreground">{account.email}</p>
         </div>
       </section>
 
-      {/* Daily allowance */}
       <section className="glass rounded-3xl p-5">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -77,71 +103,68 @@ export function ProfileView() {
         <p className="mt-2 text-xs text-subtle">Resets at midnight, India time. Re-opening a past scan is free.</p>
       </section>
 
-      {/* Name */}
       <section className="space-y-3">
         <SectionLabel>Details</SectionLabel>
         <form
           className="glass space-y-4 rounded-3xl p-5"
           onSubmit={(event) => {
             event.preventDefault();
-            if (name.trim().length < 2) {
-              toast.error("Enter your name");
-              return;
+            const result = updateName(name);
+            if (result.ok) {
+              setNameError(undefined);
+              toast.success("Name updated");
+            } else {
+              setNameError(result.error);
             }
-            user.setName(name.trim());
-            toast.success("Name updated");
           }}
         >
-          <Field label="Name" htmlFor="name">
-            <Input id="name" value={name} onChange={(event) => setName(event.target.value)} icon={<User />} autoComplete="name" />
+          <Field label="Name" htmlFor="name" error={nameError}>
+            <Input id="name" value={name} onChange={(event) => setName(event.target.value)} icon={<User />} autoComplete="name" maxLength={60} />
           </Field>
           <Field label="Email" htmlFor="email">
-            <Input id="email" value={user.email} icon={<Mail />} disabled readOnly />
+            <Input id="email" value={account.email} icon={<Mail />} disabled readOnly />
           </Field>
-          <Button type="submit" variant="secondary" className="w-full" disabled={name.trim() === user.name}>
+          <Button type="submit" variant="secondary" className="w-full" disabled={name.trim() === account.name}>
             Save
           </Button>
         </form>
       </section>
 
-      {/* Password */}
       <section className="space-y-3">
         <SectionLabel>Password</SectionLabel>
-        <form
-          className="glass space-y-4 rounded-3xl p-5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.currentTarget.reset();
-            toast.success("Password updated");
-          }}
-        >
-          <Field label="Current password" htmlFor="current">
-            <Input id="current" type="password" icon={<KeyRound />} autoComplete="current-password" placeholder="••••••••" required />
+        <form className="glass space-y-4 rounded-3xl p-5" onSubmit={submitPassword} noValidate>
+          <Field label="Current password" htmlFor="current" error={passwordErrors.current}>
+            <Input id="current" name="current" type="password" icon={<KeyRound />} autoComplete="current-password" placeholder="Your current password" invalid={Boolean(passwordErrors.current)} />
           </Field>
-          <Field label="New password" htmlFor="new">
-            <Input id="new" type="password" icon={<KeyRound />} autoComplete="new-password" placeholder="At least 8 characters" minLength={8} required />
+          <Field label="New password" htmlFor="next" error={passwordErrors.next}>
+            <Input id="next" name="next" type="password" icon={<KeyRound />} autoComplete="new-password" placeholder="8+ characters, a capital and a number" invalid={Boolean(passwordErrors.next)} />
           </Field>
-          <Button type="submit" variant="secondary" className="w-full">
+          <Button type="submit" variant="secondary" className="w-full" loading={savingPassword}>
             Change password
           </Button>
         </form>
       </section>
 
-      {/* Actions */}
       <section className="glass divide-y divide-white/[0.06] overflow-hidden rounded-3xl">
         <InstallRow />
-        <Link
-          href="/onboarding"
-          onClick={() => setOnboarded(false)}
-          className="flex min-h-14 items-center gap-3 px-5 text-sm font-medium text-white hover:bg-white/[0.03]"
+        <button
+          type="button"
+          onClick={() => {
+            setOnboarded(false);
+            router.push("/onboarding");
+          }}
+          className="flex min-h-14 w-full items-center gap-3 px-5 text-left text-sm font-medium text-white hover:bg-white/[0.03]"
         >
           <RotateCcw className="size-4 text-primary-300" />
           Redo taste onboarding
           <ChevronRight className="ml-auto size-4 text-subtle" />
-        </Link>
+        </button>
         <button
           type="button"
-          onClick={() => router.push("/login")}
+          onClick={() => {
+            signOut();
+            toast("Signed out");
+          }}
           className="flex min-h-14 w-full items-center gap-3 px-5 text-left text-sm font-medium text-white hover:bg-white/[0.03]"
         >
           <LogOut className="size-4 text-muted-foreground" />
@@ -149,7 +172,10 @@ export function ProfileView() {
         </button>
         <button
           type="button"
-          onClick={() => setDeleteOpen(true)}
+          onClick={() => {
+            setConfirm("");
+            setDeleteOpen(true);
+          }}
           className="flex min-h-14 w-full items-center gap-3 px-5 text-left text-sm font-medium text-danger hover:bg-danger/[0.06]"
         >
           <Trash2 className="size-4" />
@@ -157,16 +183,26 @@ export function ProfileView() {
         </button>
       </section>
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+      {!persistent ? (
+        <p className="text-center text-xs text-subtle">This browser isn&apos;t saving data, so everything resets when you close the page.</p>
+      ) : null}
+
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) setConfirm("");
+        }}
+      >
         <DialogContent size="sm">
           <DialogHeader>
             <DialogTitle>Delete your account?</DialogTitle>
             <DialogDescription>
-              This removes your taste profile, every scan and every rating. It can&apos;t be undone.
+              This removes your account, taste profile, every scan and every rating from this device. It can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <Input value={confirm} onChange={(event) => setConfirm(event.target.value)} placeholder="Type DELETE to confirm" aria-label="Type DELETE to confirm" />
+            <Input value={confirm} onChange={(event) => setConfirm(event.target.value)} placeholder="Type DELETE to confirm" aria-label="Type DELETE to confirm" autoComplete="off" />
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setDeleteOpen(false)}>
@@ -177,8 +213,8 @@ export function ProfileView() {
               disabled={confirm.trim().toUpperCase() !== "DELETE"}
               onClick={() => {
                 setDeleteOpen(false);
-                toast.success("Account deleted (preview only — nothing was removed)");
-                router.push("/signup");
+                deleteAccount();
+                toast.success("Account deleted");
               }}
             >
               Delete everything

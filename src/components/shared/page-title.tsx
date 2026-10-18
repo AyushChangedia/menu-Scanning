@@ -21,7 +21,7 @@ export function PageTitle({
           {eyebrow}
         </p>
       ) : null}
-      <h1 className="text-balance text-[32px] font-bold leading-[1.1] tracking-tight text-white">
+      <h1 className="text-balance text-[32px] font-bold leading-[1.1] tracking-tight text-white [overflow-wrap:anywhere]">
         {title}
       </h1>
       {subtitle ? (

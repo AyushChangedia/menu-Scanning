@@ -48,7 +48,8 @@ export function activeFilterCount(filters: MenuFilters): number {
 export function applyFilters(entries: ScoredDish[], filters: MenuFilters, query: string): ScoredDish[] {
   const q = query.trim().toLowerCase();
   const filtered = entries.filter(({ dish, match }) => {
-    if (filters.hideDrinks && dish.course === "drink") return false;
+    // Picking "Drink" as a course is an explicit ask to see drinks.
+    if (filters.hideDrinks && dish.course === "drink" && !filters.courses.includes("drink")) return false;
     if (filters.hideHeadsUp && isHeadsUp(match)) return false;
     if (filters.diets.length > 0 && !filters.diets.includes(dish.diet)) return false;
     if (dish.spice > filters.maxSpice) return false;

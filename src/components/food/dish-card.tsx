@@ -46,16 +46,13 @@ export function DishCard({
       type="button"
       onClick={onOpen}
       initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
+      animate={{ opacity: match.excluded ? 0.5 : 1, y: 0 }}
       transition={{ duration: 0.45, delay: Math.min(index, 12) * 0.04, ease: [0.16, 1, 0.3, 1] }}
-      className={cn(
-        "glass block w-full rounded-3xl p-4 text-left transition-colors hover:border-white/[0.14] active:scale-[0.99]",
-        match.excluded && "opacity-50",
-      )}
+      className="glass block w-full rounded-3xl p-4 text-left transition-colors hover:border-white/[0.14] active:scale-[0.99]"
     >
       <div className="flex items-start gap-2.5">
         <DietMark diet={dish.diet} className="mt-[3px]" />
-        <h3 className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-snug text-white">
+        <h3 className="line-clamp-2 min-w-0 flex-1 text-[15px] font-semibold leading-snug text-white [overflow-wrap:anywhere]">
           {dish.name}
         </h3>
         <PriceTag dish={dish} />
@@ -117,7 +114,7 @@ export function PickCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">
             <DietMark diet={dish.diet} className="mt-[5px]" />
-            <h3 className="line-clamp-2 min-w-0 flex-1 text-lg font-bold leading-snug tracking-tight text-white">
+            <h3 className="line-clamp-2 min-w-0 flex-1 text-lg font-bold leading-snug tracking-tight text-white [overflow-wrap:anywhere]">
               {dish.name}
             </h3>
           </div>

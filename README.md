@@ -10,7 +10,10 @@ Snap a restaurant menu, get every fancy dish explained in plain words (spice, in
 npm install
 npm run dev        # http://localhost:3000 — best viewed at phone width (390px)
 npm run check      # typecheck + lint + tests
+npm run preview:build   # one self-contained HTML file → preview/dist/forkcast.html
 ```
+
+`preview:build` bundles the same screens into a single HTML fragment (inline CSS and JS, in-memory routing instead of URLs) so the UI can be shared as a link, e.g. as a Claude Artifact. The shims for `next/link` and `next/navigation` live in `preview/`.
 
 ## Screens
 

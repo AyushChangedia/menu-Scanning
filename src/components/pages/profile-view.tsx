@@ -8,6 +8,7 @@ import { ChevronRight, KeyRound, LogOut, Mail, RotateCcw, ScanLine, Trash2, User
 import { toast } from "sonner";
 
 import { useAppState } from "@/components/providers/app-state";
+import { InstallRow } from "@/components/pwa/install";
 import { PageTitle, SectionLabel } from "@/components/shared/page-title";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -128,6 +129,7 @@ export function ProfileView() {
 
       {/* Actions */}
       <section className="glass divide-y divide-white/[0.06] overflow-hidden rounded-3xl">
+        <InstallRow />
         <Link
           href="/onboarding"
           onClick={() => setOnboarded(false)}

@@ -2,7 +2,7 @@
   "name": "forkcast",
   "version": "0.1.0",
   "private": true,
-  "description": "Forkcast — snap a restaurant menu, decode the fancy names, get picks for your taste. UI build with mock data.",
+  "description": "Forkcast \u2014 snap a restaurant menu, decode the fancy names, get picks for your taste. UI build with mock data.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "preview:build": "node preview/build.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.15",
@@ -33,6 +34,7 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.4",
     "autoprefixer": "10.4.21",
+    "esbuild": "0.25.12",
     "eslint": "9.39.1",
     "eslint-config-next": "15.5.22",
     "postcss": "8.5.6",

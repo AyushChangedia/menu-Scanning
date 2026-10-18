@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Camera, ChevronRight, ImagePlus, Images, Plus, Sparkles, X } from "lucide-react";
 
 import { useAppState } from "@/components/providers/app-state";
+import { InstallBanner } from "@/components/pwa/install";
 import { MAX_PAGES, useScanPicker } from "@/components/providers/scan-picker";
 import { SpiceMeter } from "@/components/food/spice-meter";
 import { PageTitle, SectionLabel } from "@/components/shared/page-title";
@@ -31,6 +32,7 @@ export function HomeView() {
         subtitle="Snap the menu. I'll decode the fancy names and pick what you'll like."
       />
       <ScanHero />
+      <InstallBanner />
       <TasteCard />
       <RecentScans />
     </div>

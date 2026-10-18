@@ -42,3 +42,6 @@ yarn-error.log*
 # prisma
 prisma/*.db
 prisma/*.db-journal
+
+# single-file preview build
+/preview/dist

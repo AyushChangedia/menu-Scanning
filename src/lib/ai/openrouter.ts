@@ -173,6 +173,13 @@ function fromApiError(status: number, message: string, headers?: Record<string, 
     }
     return new ProviderError("The free AI is busy. Wait a minute and retry this page.", 429, "busy");
   }
+  if (status === 404 && /data policy|privacy/i.test(message)) {
+    return new ProviderError(
+      "Your OpenRouter privacy settings block free models. Allow them at openrouter.ai/settings/privacy, then retry.",
+      500,
+      "ai_policy",
+    );
+  }
   if (status === 404) {
     return new ProviderError(
       CUSTOM_MODEL

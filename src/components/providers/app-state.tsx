@@ -36,7 +36,7 @@ import type { Dish, Feedback, MenuPage, Scan, ScanPageState, TastePreference } f
 
 /**
  * Front-end state. Accounts (email + hashed password), each account's taste,
- * ratings and scans are kept on this device. Menu photos are read by Claude
+ * ratings and scans are kept on this device. Menu photos are read by AI
  * through /api/scan; when the server has no AI key, scans use clearly
  * labelled sample menus instead.
  */

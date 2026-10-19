@@ -1,9 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
-
-import { AnalyzeError, MODEL, aiMode, analyzeMenuPage, type ImageMediaType } from "@/lib/ai/analyzeMenuPage";
+import { AnalyzeError, ProviderError, aiMode, aiModel, analyzeMenuPage, type ImageMediaType } from "@/lib/ai/analyzeMenuPage";
 
 /**
- * Reads one menu page with Claude.
+ * Reads one menu page with AI: free models on OpenRouter (OPENROUTER_API_KEY),
+ * or Claude (ANTHROPIC_API_KEY).
  *
  *   GET  /api/scan  → whether AI reading is switched on (no secrets).
  *   POST /api/scan  → multipart { image, index, count } → { ok, page, model, usage }
@@ -13,7 +12,7 @@ import { AnalyzeError, MODEL, aiMode, analyzeMenuPage, type ImageMediaType } fro
  */
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120; // free models can be slow on a dense page
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 4 * 1024 * 1024; // Vercel's request limit is 4.5 MB
@@ -37,7 +36,7 @@ function fail(status: number, code: string, error: string) {
 export async function GET() {
   const mode = aiMode();
   return Response.json(
-    { ai: mode !== "off", mock: mode === "mock", inviteRequired: Boolean(inviteCode()), model: mode === "ai" ? MODEL : null },
+    { ai: mode !== "off", mock: mode === "mock", inviteRequired: Boolean(inviteCode()), model: mode === "ai" ? aiModel() : null },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -45,10 +44,10 @@ export async function GET() {
 export async function POST(request: Request) {
   const mode = aiMode();
   if (mode === "off") {
-    return fail(503, "ai_off", "Menu reading isn't switched on yet. Add ANTHROPIC_API_KEY in Vercel.");
+    return fail(503, "ai_off", "Menu reading isn't switched on yet. Add OPENROUTER_API_KEY in Vercel.");
   }
 
-  // A shared invite code keeps strangers from spending your AI credits.
+  // A shared invite code keeps strangers from using up your AI quota.
   const expected = inviteCode();
   if (expected) {
     const given = request.headers.get("x-forkcast-invite")?.trim() ?? "";
@@ -79,7 +78,10 @@ export async function POST(request: Request) {
 
   try {
     const data = Buffer.from(await image.arrayBuffer()).toString("base64");
-    const result = await analyzeMenuPage({ data, mediaType: image.type as ImageMediaType, index, count });
+    const result = await analyzeMenuPage(
+      { data, mediaType: image.type as ImageMediaType, index, count },
+      { referer: new URL(request.url).origin },
+    );
     return Response.json(
       {
         ok: true,
@@ -91,24 +93,7 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (error instanceof AnalyzeError) return fail(error.status, "unreadable", error.message);
-    if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
-      console.error("[scan] Anthropic rejected the API key:", error.message);
-      return fail(500, "ai_key", "The AI key on the server isn't working. Check ANTHROPIC_API_KEY in Vercel.");
-    }
-    if (error instanceof Anthropic.RateLimitError) {
-      return fail(429, "busy", "Too many menus at once. Wait a minute and retry this page.");
-    }
-    if (error instanceof Anthropic.BadRequestError) {
-      console.error("[scan] Bad request to Anthropic:", error.message);
-      return fail(502, "unreadable", "The AI couldn't read this photo. Try a sharper, straight-on shot.");
-    }
-    if (error instanceof Anthropic.APIConnectionTimeoutError) {
-      return fail(504, "timeout", "This page took too long. Retry, or shoot it in two halves.");
-    }
-    if (error instanceof Anthropic.APIError) {
-      console.error(`[scan] Anthropic error ${error.status}:`, error.message);
-      return fail(503, "busy", "The AI is busy right now. Retry this page in a moment.");
-    }
+    if (error instanceof ProviderError) return fail(error.status, error.code, error.message);
     console.error("[scan] Unexpected failure:", error);
     return fail(500, "unknown", "Something went wrong reading this page. Retry it.");
   }

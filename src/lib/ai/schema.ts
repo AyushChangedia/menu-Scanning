@@ -1,5 +1,5 @@
 /**
- * The shape Claude returns for one menu page (spec §6.2).
+ * The shape the AI returns for one menu page (spec §6.2).
  *
  * Built with the Zod 4 API (`zod/v4`, bundled in zod 3.25) because the
  * Anthropic SDK's structured-output helper expects it. Constraints the API's
@@ -9,32 +9,42 @@
 
 import { z } from "zod/v4";
 
+export const COURSES = ["starter", "soup", "salad", "main", "pizza", "pasta", "rice_noodles", "sushi", "burger_sandwich", "dessert", "side", "drink", "other"] as const;
+export const CUISINES = ["italian", "chinese", "indo_chinese", "thai", "japanese", "korean", "pan_asian", "mexican", "american", "continental", "lebanese_mediterranean", "indian", "other"] as const;
+export const DIETS = ["veg", "egg", "non_veg", "unknown"] as const;
+export const DIET_SOURCES = ["menu_marker", "menu_text", "inferred"] as const;
+export const ALLERGENS = ["peanuts", "tree_nuts", "dairy", "gluten", "egg", "soy", "sesame", "shellfish", "fish"] as const;
+export const FLAVOR_KEYS = ["spicy", "cheesy", "creamy", "tangy", "sweet", "smoky", "garlicky", "herby", "crispy", "umami", "saucy", "nutty"] as const;
+export const HEAVINESS = ["light", "balanced", "indulgent"] as const;
+export const CONFIDENCE = ["high", "medium", "low"] as const;
+export const LEGIBILITY = ["good", "partial", "poor"] as const;
+
 const Flavor = z.number().int().min(0).max(3);
 
 const DishObject = z.object({
   name: z.string(),
   canonical_name: z.string(),
   section: z.string().nullable(),
-  course: z.enum(["starter", "soup", "salad", "main", "pizza", "pasta", "rice_noodles", "sushi", "burger_sandwich", "dessert", "side", "drink", "other"]),
-  cuisine: z.enum(["italian", "chinese", "indo_chinese", "thai", "japanese", "korean", "pan_asian", "mexican", "american", "continental", "lebanese_mediterranean", "indian", "other"]),
+  course: z.enum(COURSES),
+  cuisine: z.enum(CUISINES),
   price: z.number().nullable(),
   price_variants: z.array(z.object({ label: z.string(), price: z.number() })),
   printed_description: z.string().nullable(),
-  diet: z.enum(["veg", "egg", "non_veg", "unknown"]),
-  diet_source: z.enum(["menu_marker", "menu_text", "inferred"]),
+  diet: z.enum(DIETS),
+  diet_source: z.enum(DIET_SOURCES),
   contains_onion_garlic: z.boolean().nullable(),
   key_ingredients: z.array(z.string()).min(1).max(8),
-  likely_allergens: z.array(z.enum(["peanuts", "tree_nuts", "dairy", "gluten", "egg", "soy", "sesame", "shellfish", "fish"])),
+  likely_allergens: z.array(z.enum(ALLERGENS)),
   spice: z.number().int().min(0).max(5),
   flavor: z.object({
     spicy: Flavor, cheesy: Flavor, creamy: Flavor, tangy: Flavor, sweet: Flavor, smoky: Flavor,
     garlicky: Flavor, herby: Flavor, crispy: Flavor, umami: Flavor, saucy: Flavor, nutty: Flavor,
   }),
-  heaviness: z.enum(["light", "balanced", "indulgent"]),
+  heaviness: z.enum(HEAVINESS),
   taste_overview: z.string().max(240),
   familiar_comparison: z.string().max(120).nullable(),
   india_style_note: z.string().max(160).nullable(),
-  confidence: z.enum(["high", "medium", "low"]),
+  confidence: z.enum(CONFIDENCE),
   confidence_reason: z.string().nullable(),
 });
 
@@ -47,7 +57,7 @@ export const DishSchema = DishObject.superRefine((dish, ctx) => {
 export const MenuPageSchema = z.object({
   is_menu: z.boolean(),
   restaurant_name: z.string().nullable(),
-  legibility: z.enum(["good", "partial", "poor"]),
+  legibility: z.enum(LEGIBILITY),
   notes: z.string().nullable(),
   dishes: z.array(DishSchema),
 });
@@ -72,7 +82,7 @@ const LooseDish = DishObject.extend({
 export const MenuPageOutputSchema = z.object({
   is_menu: z.boolean(),
   restaurant_name: z.string().nullable(),
-  legibility: z.enum(["good", "partial", "poor"]),
+  legibility: z.enum(LEGIBILITY),
   notes: z.string().nullable(),
   dishes: z.array(LooseDish),
 });

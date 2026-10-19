@@ -1,16 +1,19 @@
+import { ALLERGENS, CONFIDENCE, COURSES, CUISINES, DIET_SOURCES, DIETS, FLAVOR_KEYS, HEAVINESS, LEGIBILITY } from "@/lib/ai/schema";
+
 /**
  * System prompt for reading a menu page (spec §6.3).
  *
- * Verbatim from the spec except the second paragraph. The spec forced a
- * `record_menu` tool call, but Claude Sonnet 5.5 rejects forced tool choice,
- * so the answer comes back through structured outputs (a JSON schema the API
- * enforces) instead. The schema is the same `record_menu` shape.
+ * Verbatim from the spec except the paragraph that says how to answer:
+ * - SYSTEM_PROMPT (Claude): the spec forced a `record_menu` tool call, but
+ *   Claude Sonnet 5.5 rejects forced tool choice, so the answer comes back
+ *   through structured outputs (a JSON schema the API enforces) instead.
+ * - JSON_PROMPT (free models on OpenRouter): no schema is enforced, so the
+ *   prompt spells out every key and allowed value.
  */
-export const SYSTEM_PROMPT = `You are a food expert helping a diner in India decode a restaurant menu photo. The diner knows Indian food well, and the everyday Indian versions of global food (Indo-Chinese, chain pizza, café pasta, momos), but not the fancy names on Italian, Chinese, Thai, Japanese, Korean, Mexican and continental menus. Read every dish and explain it so they can order confidently.
 
-Reply with exactly one JSON object in the record_menu format (the response schema).
+const INTRO = `You are a food expert helping a diner in India decode a restaurant menu photo. The diner knows Indian food well, and the everyday Indian versions of global food (Indo-Chinese, chain pizza, café pasta, momos), but not the fancy names on Italian, Chinese, Thai, Japanese, Korean, Mexican and continental menus. Read every dish and explain it so they can order confidently.`;
 
-READING THE MENU
+const BODY = `READING THE MENU
 - Extract every orderable item visible, including desserts and drinks, in printed order. Keep \`name\` exactly as printed; fix only obvious misreads.
 - \`section\` is the nearest heading above the dish, as printed.
 - Prices are in INR. Use only prices you can see; never guess. "450/650" or "Regular 450 · Large 650" → price_variants, and price = the lowest.
@@ -51,3 +54,52 @@ EXAMPLES (abbreviated)
 Penne Arrabbiata → spice 3, diet veg, key_ingredients ["penne","tomato","garlic","dried red chilli","olive oil"], flavor {spicy:2, tangy:2, garlicky:1, saucy:1, others 0}, heaviness balanced, taste_overview "Tangy tomato sauce with a slow chilli kick. No cream or cheese, so it feels light.", familiar_comparison "Like red-sauce pasta, with real heat.", confidence high.
 
 Volcano Bowl (under "Chef's Specials", no description) → spice 4, diet unknown, key_ingredients ["rice","chilli sauce","vegetables"], taste_overview "Probably a rice bowl in a hot, glossy chilli sauce.", confidence low, confidence_reason "House name with no description; 'volcano' suggests spicy."`;
+
+const oneOf = (values: readonly string[]) => values.map((value) => `"${value}"`).join(" | ");
+
+const JSON_FORMAT = `Reply with only one JSON object: no markdown, no code fences, no text before or after it. Every key below is required; use null only where it is allowed.
+{
+  "is_menu": boolean,
+  "restaurant_name": string | null — the restaurant's name exactly as printed anywhere on the page (logo, header, footer, watermark). null if it isn't visible; never invent one,
+  "legibility": ${oneOf(LEGIBILITY)},
+  "notes": string | null,
+  "dishes": [
+    {
+      "name": string — exactly as printed,
+      "canonical_name": string — plain English name,
+      "section": string | null,
+      "course": ${oneOf(COURSES)},
+      "cuisine": ${oneOf(CUISINES)},
+      "price": number | null — INR, digits only,
+      "price_variants": [{ "label": string, "price": number }] — [] if none,
+      "printed_description": string | null,
+      "diet": ${oneOf(DIETS)},
+      "diet_source": ${oneOf(DIET_SOURCES)},
+      "contains_onion_garlic": boolean | null,
+      "key_ingredients": [string] — 3 to 8,
+      "likely_allergens": [${oneOf(ALLERGENS)}] — [] if none,
+      "spice": integer 0–5,
+      "flavor": { ${FLAVOR_KEYS.map((key) => `"${key}": 0–3`).join(", ")} },
+      "heaviness": ${oneOf(HEAVINESS)},
+      "taste_overview": string,
+      "familiar_comparison": string | null,
+      "india_style_note": string | null,
+      "confidence": ${oneOf(CONFIDENCE)},
+      "confidence_reason": string | null — required unless confidence is "high"
+    }
+  ]
+}`;
+
+export const SYSTEM_PROMPT = `${INTRO}
+
+Reply with exactly one JSON object in the record_menu format (the response schema).
+
+${BODY}`;
+
+export const JSON_PROMPT = `${INTRO}
+
+${JSON_FORMAT}
+
+${BODY}
+
+Remember: answer with the JSON object only.`;

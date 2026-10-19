@@ -84,7 +84,7 @@ export type Scan = {
   createdAt: string;
   pages: ScanPageState[];
   dishes: Dish[];
-  /** "ai" = read by Claude; "demo" = sample menus because AI isn't connected. */
+  /** "ai" = read by AI; "demo" = sample menus because AI isn't connected. */
   source?: "ai" | "demo";
   /** Set once the diner renames the scan, so page results don't overwrite it. */
   customName?: boolean;

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Camera, ChevronRight, ImagePlus, Images, Plus, Sparkles, X } from "lucide-react";
+import { Camera, ChevronRight, ImagePlus, Images, Info, KeyRound, Plus, Sparkles, X } from "lucide-react";
 
 import { useAppState } from "@/components/providers/app-state";
 import { InstallBanner } from "@/components/pwa/install";
@@ -13,6 +13,7 @@ import { SpiceMeter } from "@/components/food/spice-meter";
 import { PageTitle, SectionLabel } from "@/components/shared/page-title";
 import { ScanThumb } from "@/components/scan/scan-thumb";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { formatWhen, mealEyebrow, plural } from "@/lib/format";
 import { ALLERGY_LABEL, DIET_META, FLAVOR_LABEL, HEAVINESS_META, spiceWord } from "@/lib/taste";
 import { FLAVOR_ICON } from "@/lib/taste-icons";
@@ -45,7 +46,9 @@ export function HomeView() {
 
 function ScanHero() {
   const router = useRouter();
-  const { draft, removeDraft, startScan } = useAppState();
+  const { draft, removeDraft, startScan, server, invite, setInvite } = useAppState();
+  const [code, setCode] = React.useState("");
+  const needsInvite = Boolean(server?.inviteRequired && !invite);
   const { openCamera, openGallery } = useScanPicker();
 
   function decode() {
@@ -90,6 +93,13 @@ function ScanHero() {
             <p className="mt-4 text-center text-xs leading-relaxed text-subtle">
               Up to {MAX_PAGES} pages. Big menu? Shoot one section at a time — duplicates are merged.
             </p>
+
+            {server && !server.ai ? (
+              <p className="mt-3 flex items-start gap-2 rounded-2xl border border-cyan/20 bg-cyan/10 px-3 py-2.5 text-xs leading-relaxed text-white/80">
+                <Info className="mt-0.5 size-3.5 shrink-0 text-cyan" />
+                AI menu reading isn&apos;t switched on yet, so scans show a sample menu instead of your photo.
+              </p>
+            ) : null}
           </motion.div>
         ) : (
           <motion.div key="draft" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
@@ -140,7 +150,27 @@ function ScanHero() {
               ) : null}
             </div>
 
-            <Button size="lg" className="mt-4 w-full" onClick={decode}>
+            {needsInvite ? (
+              <form
+                className="mt-4 space-y-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (code.trim()) setInvite(code);
+                }}
+              >
+                <label htmlFor="invite" className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <KeyRound className="size-3.5" /> Invite code
+                </label>
+                <div className="flex gap-2">
+                  <Input id="invite" value={code} onChange={(event) => setCode(event.target.value)} placeholder="From whoever shared Forkcast" autoComplete="off" />
+                  <Button type="submit" variant="secondary" className="shrink-0">
+                    Save
+                  </Button>
+                </div>
+              </form>
+            ) : null}
+
+            <Button size="lg" className="mt-4 w-full" onClick={decode} disabled={needsInvite}>
               <Sparkles /> Decode {plural(draft.length, "page")}
             </Button>
             <button type="button" onClick={openGallery} className="mt-2 flex h-11 w-full items-center justify-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-white">

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowLeft, Flame, Pencil, RotateCcw, Search, SearchX, SlidersHorizontal, Sparkles, TriangleAlert, UtensilsCrossed } from "lucide-react";
+import { ArrowLeft, Flame, Info, KeyRound, Pencil, RotateCcw, Search, SearchX, SlidersHorizontal, Sparkles, TriangleAlert, UtensilsCrossed } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppState } from "@/components/providers/app-state";
@@ -61,8 +61,8 @@ export function ResultsView({ id }: { id: string }) {
     return (
       <EmptyState
         icon={SearchX}
-        title="This scan isn't here"
-        description="In this UI preview, new scans live in memory and disappear on refresh. The sample scans are always available."
+        title="This scan isn't on this device"
+        description="It may have been deleted, or it was scanned on another phone or account."
         action={
           <Button asChild>
             <Link href="/history">Open history</Link>
@@ -92,6 +92,8 @@ export function ResultsView({ id }: { id: string }) {
     <div className="space-y-6">
       <ResultsHeader scan={scan} />
 
+      {scan.source === "demo" ? <SampleNotice /> : null}
+      <InviteRecovery scan={scan} />
       <ScanProgress scan={scan} />
 
       {scan.dishes.length > 0 ? (
@@ -159,7 +161,7 @@ export function ResultsView({ id }: { id: string }) {
             <DishCardSkeleton key={key} />
           ))}
         </div>
-      ) : (
+      ) : scan.pages.some((page) => page.status === "failed") ? null : (
         <EmptyState
           icon={UtensilsCrossed}
           title="That doesn't look like a menu"
@@ -174,6 +176,55 @@ export function ResultsView({ id }: { id: string }) {
 
       <DishSheet entry={openEntry} onClose={() => setOpen(null)} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Notices
+// ---------------------------------------------------------------------------
+
+/** Shown when the server has no AI key, so nobody mistakes a sample for their menu. */
+function SampleNotice() {
+  return (
+    <div className="flex gap-3 rounded-3xl border border-cyan/25 bg-cyan/10 p-4 text-sm leading-relaxed">
+      <Info className="mt-0.5 size-4 shrink-0 text-cyan" />
+      <p className="text-white/85">
+        <span className="font-semibold text-white">This is a sample menu, not your photo.</span> AI menu reading isn&apos;t
+        switched on yet, so Forkcast shows example dishes to try the app with.
+      </p>
+    </div>
+  );
+}
+
+/** When the server wants an invite code, ask for it here and retry the pages. */
+function InviteRecovery({ scan }: { scan: Scan }) {
+  const { setInvite, retryPage } = useAppState();
+  const [code, setCode] = React.useState("");
+  const blocked = scan.pages.filter((page) => page.status === "failed" && page.code === "invite_required");
+  if (blocked.length === 0) return null;
+
+  return (
+    <form
+      className="glass space-y-3 rounded-3xl p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!code.trim()) return;
+        setInvite(code);
+        blocked.forEach((page) => retryPage(scan.id, page.index));
+      }}
+    >
+      <p className="flex items-center gap-2 text-[15px] font-semibold text-white">
+        <KeyRound className="size-4 text-primary-300" />
+        Enter the invite code to read menus
+      </p>
+      <p className="text-sm text-muted-foreground">Ask whoever shared Forkcast with you. You only need it once on this phone.</p>
+      <div className="flex gap-2">
+        <Input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Invite code" autoComplete="off" aria-label="Invite code" />
+        <Button type="submit" className="shrink-0">
+          Retry
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -397,7 +448,7 @@ function ForYou({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-baseline justify-between px-1">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-1">
         <h2 className="text-lg font-bold tracking-tight text-white">{label}</h2>
         {label === "Closest matches" ? <span className="text-xs text-subtle">Fewer than 3 dishes scored 60%+</span> : null}
       </div>

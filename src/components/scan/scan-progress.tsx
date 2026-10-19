@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
+import { Ban, Check, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
 
 import { useAppState } from "@/components/providers/app-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,11 +29,12 @@ export function ScanProgress({ scan }: { scan: Scan }) {
     return () => window.clearInterval(timer);
   }, [processing]);
 
-  const done = scan.pages.filter((page) => page.status === "done").length;
+  const settled = scan.pages.filter((page) => page.status !== "pending").length;
   const failed = scan.pages.filter((page) => page.status === "failed");
-  const current = Math.min(done + 1, scan.pageCount);
+  const notMenu = scan.pages.filter((page) => page.status === "not_menu");
+  const current = Math.min(settled + 1, scan.pageCount);
 
-  if (!processing && failed.length === 0) return null;
+  if (!processing && failed.length === 0 && notMenu.length === 0) return null;
 
   return (
     <section className="glass relative overflow-hidden rounded-3xl p-5">
@@ -49,7 +50,7 @@ export function ScanProgress({ scan }: { scan: Scan }) {
             <motion.div
               className="h-full rounded-full bg-brand-gradient shadow-glow-sm"
               initial={{ width: "6%" }}
-              animate={{ width: `${Math.max(6, (done / scan.pageCount) * 100)}%` }}
+              animate={{ width: `${Math.max(6, (settled / scan.pageCount) * 100)}%` }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
             />
           </div>
@@ -64,7 +65,13 @@ export function ScanProgress({ scan }: { scan: Scan }) {
       ) : (
         <p className="flex items-center gap-2 text-[15px] font-semibold text-warning">
           <TriangleAlert className="size-4" />
-          {failed.length === 1 ? "One page wasn't read" : `${failed.length} pages weren't read`}
+          {failed.length === 0
+            ? notMenu.length === 1
+              ? "One photo wasn't a menu"
+              : `${notMenu.length} photos weren't menus`
+            : failed.length === 1
+              ? "One page wasn't read"
+              : `${failed.length} pages weren't read`}
         </p>
       )}
 
@@ -74,7 +81,7 @@ export function ScanProgress({ scan }: { scan: Scan }) {
             key={page.index}
             className={cn(
               "flex min-h-11 items-center gap-3 rounded-2xl border px-3 py-2",
-              page.status === "failed" ? "border-warning/25 bg-warning-soft" : "border-white/[0.06] bg-white/[0.02]",
+              page.status === "failed" || page.status === "not_menu" ? "border-warning/25 bg-warning-soft" : "border-white/[0.06] bg-white/[0.02]",
             )}
           >
             <span
@@ -82,13 +89,15 @@ export function ScanProgress({ scan }: { scan: Scan }) {
                 "grid size-7 shrink-0 place-items-center rounded-full",
                 page.status === "done" && "bg-success-soft text-success",
                 page.status === "pending" && "bg-primary/15 text-primary-300",
-                page.status === "failed" && "bg-warning/20 text-warning",
+                (page.status === "failed" || page.status === "not_menu") && "bg-warning/20 text-warning",
               )}
             >
               {page.status === "done" ? (
                 <Check className="size-3.5" strokeWidth={3} />
               ) : page.status === "pending" ? (
                 <Loader2 className="size-3.5 animate-spin" />
+              ) : page.status === "not_menu" ? (
+                <Ban className="size-3.5" />
               ) : (
                 <TriangleAlert className="size-3.5" />
               )}
@@ -97,10 +106,16 @@ export function ScanProgress({ scan }: { scan: Scan }) {
               <span className="font-medium text-white">Page {page.index + 1}</span>
               <span className="text-muted-foreground">
                 {" · "}
-                {page.status === "done" ? "Decoded" : page.status === "pending" ? "Reading…" : (page.error ?? "Not analysed — re-upload")}
+                {page.status === "done"
+                  ? "Decoded"
+                  : page.status === "pending"
+                    ? "Reading…"
+                    : page.status === "not_menu"
+                      ? "Doesn't look like a menu"
+                      : (page.error ?? "Not analysed — re-upload")}
               </span>
             </span>
-            {page.status === "failed" ? (
+            {page.status === "failed" && page.code !== "gone" && page.code !== "invite_required" && page.code !== "bad_type" ? (
               <button
                 type="button"
                 onClick={() => retryPage(scan.id, page.index)}

@@ -200,7 +200,7 @@ export function SignUpForm() {
 }
 
 export function ForgotPasswordForm() {
-  const { resetPassword } = useAppState();
+  const { resetPassword, persistent } = useAppState();
   const [done, setDone] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [fields, setFields] = React.useState<Errors>({});
@@ -225,7 +225,11 @@ export function ForgotPasswordForm() {
   return (
     <AuthCard
       title="Reset your password"
-      description="Accounts are saved on this device, so you can set a new password right here."
+      description={
+        persistent
+          ? "Accounts are saved on this device, so you can set a new password right here."
+          : "Accounts in this browser only last until you close the page, so you can set a new password right here."
+      }
       footer={
         <Link href="/login" className={linkClass}>
           Back to sign in

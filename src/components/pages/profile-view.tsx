@@ -32,7 +32,8 @@ function Field({ label, htmlFor, error, children }: { label: string; htmlFor: st
 
 export function ProfileView() {
   const router = useRouter();
-  const { account, usage, persistent, updateName, changePassword, signOut, deleteAccount, setOnboarded } = useAppState();
+  const { account, usage, persistent, updateName, changePassword, signOut, deleteAccount, setOnboarded, server, invite, setInvite } = useAppState();
+  const [inviteDraft, setInviteDraft] = React.useState(invite ?? "");
   const [name, setName] = React.useState(account?.name ?? "");
   const [nameError, setNameError] = React.useState<string>();
   const [passwordErrors, setPasswordErrors] = React.useState<Partial<Record<"current" | "next", string>>>({});
@@ -119,7 +120,17 @@ export function ProfileView() {
           }}
         >
           <Field label="Name" htmlFor="name" error={nameError}>
-            <Input id="name" value={name} onChange={(event) => setName(event.target.value)} icon={<User />} autoComplete="name" maxLength={60} />
+            <Input
+              id="name"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setNameError(undefined);
+              }}
+              icon={<User />}
+              autoComplete="name"
+              maxLength={60}
+            />
           </Field>
           <Field label="Email" htmlFor="email">
             <Input id="email" value={account.email} icon={<Mail />} disabled readOnly />
@@ -134,16 +145,36 @@ export function ProfileView() {
         <SectionLabel>Password</SectionLabel>
         <form className="glass space-y-4 rounded-3xl p-5" onSubmit={submitPassword} noValidate>
           <Field label="Current password" htmlFor="current" error={passwordErrors.current}>
-            <Input id="current" name="current" type="password" icon={<KeyRound />} autoComplete="current-password" placeholder="Your current password" invalid={Boolean(passwordErrors.current)} />
+            <Input onInput={() => setPasswordErrors((prev) => ({ ...prev, current: undefined }))} id="current" name="current" type="password" icon={<KeyRound />} autoComplete="current-password" placeholder="Your current password" invalid={Boolean(passwordErrors.current)} />
           </Field>
           <Field label="New password" htmlFor="next" error={passwordErrors.next}>
-            <Input id="next" name="next" type="password" icon={<KeyRound />} autoComplete="new-password" placeholder="8+ characters, a capital and a number" invalid={Boolean(passwordErrors.next)} />
+            <Input onInput={() => setPasswordErrors((prev) => ({ ...prev, next: undefined }))} id="next" name="next" type="password" icon={<KeyRound />} autoComplete="new-password" placeholder="8+ characters, a capital and a number" invalid={Boolean(passwordErrors.next)} />
           </Field>
           <Button type="submit" variant="secondary" className="w-full" loading={savingPassword}>
             Change password
           </Button>
         </form>
       </section>
+
+      {server?.inviteRequired ? (
+        <section className="space-y-3">
+          <SectionLabel>Invite code</SectionLabel>
+          <form
+            className="glass flex gap-2 rounded-3xl p-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!inviteDraft.trim()) return;
+              setInvite(inviteDraft);
+              toast.success("Invite code saved");
+            }}
+          >
+            <Input value={inviteDraft} onChange={(event) => setInviteDraft(event.target.value)} placeholder="Needed to read menus" aria-label="Invite code" autoComplete="off" />
+            <Button type="submit" variant="secondary" className="shrink-0" disabled={!inviteDraft.trim() || inviteDraft.trim() === invite}>
+              Save
+            </Button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="glass divide-y divide-white/[0.06] overflow-hidden rounded-3xl">
         <InstallRow />

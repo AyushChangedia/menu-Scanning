@@ -90,7 +90,7 @@ export function OnboardingView() {
     setPrefs(draft);
     setOnboarded(true);
     toast.success("You're all set — go scan a menu");
-    router.push("/");
+    router.replace("/");
   }
 
   return (

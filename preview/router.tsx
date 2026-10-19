@@ -54,6 +54,8 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     try {
+      // Each screen starts at the top; don't let the browser restore old offsets.
+      window.history.scrollRestoration = "manual";
       window.history.replaceState({ forkcastIndex: 0 }, "");
       historyWorks.current = true;
     } catch {

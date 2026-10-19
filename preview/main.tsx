@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import { X } from "lucide-react";
 
 import AppLayout from "@/app/(app)/layout";
+import { RequireAccount } from "@/components/auth/guards";
 import AuthLayout from "@/app/(auth)/layout";
 import NotFound from "@/app/not-found";
 import { ForgotPasswordForm, LoginForm, SignUpForm } from "@/components/auth/auth-forms";
@@ -29,7 +30,12 @@ function Screen() {
   if (path === "/login") return <AuthLayout><LoginForm /></AuthLayout>;
   if (path === "/signup") return <AuthLayout><SignUpForm /></AuthLayout>;
   if (path === "/forgot-password") return <AuthLayout><ForgotPasswordForm /></AuthLayout>;
-  if (path === "/onboarding") return <OnboardingView />;
+  if (path === "/onboarding")
+    return (
+      <RequireAccount onboarding>
+        <OnboardingView />
+      </RequireAccount>
+    );
 
   const scan = path.match(/^\/scan\/([^/]+)$/);
   const page =

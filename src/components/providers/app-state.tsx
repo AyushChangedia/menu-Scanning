@@ -18,14 +18,27 @@ import {
 import { LIVE_SCAN_PAGES } from "@/lib/mock/fixtures";
 import { DAILY_PAGE_LIMIT, EMPTY_PREFS, uniqueCuisines } from "@/lib/mock/data";
 import { mergeDuplicates, toDishes } from "@/lib/merge";
+import { compressForUpload, sha256Hex } from "@/lib/image";
+import {
+  OFFLINE_STATUS,
+  ScanRequestError,
+  analyzePage,
+  cachePage,
+  cachedPage,
+  fetchServerStatus,
+  readInvite,
+  writeInvite,
+  type ServerStatus,
+} from "@/lib/scan-client";
 import { readJSON, removeKey, storageIsPersistent, writeJSON } from "@/lib/storage";
 import { sleep } from "@/lib/utils";
-import type { Dish, Feedback, Scan, TastePreference } from "@/lib/types";
+import type { Dish, Feedback, MenuPage, Scan, ScanPageState, TastePreference } from "@/lib/types";
 
 /**
  * Front-end state. Accounts (email + hashed password), each account's taste,
- * ratings and scans are kept on this device. Scans are "decoded" by a
- * simulated scanner that returns fixture menus — no network, no AI.
+ * ratings and scans are kept on this device. Menu photos are read by Claude
+ * through /api/scan; when the server has no AI key, scans use clearly
+ * labelled sample menus instead.
  */
 
 export type DraftPage = { id: string; file: File; preview: string };
@@ -61,7 +74,38 @@ type AppState = {
   startScan: () => string | null;
   retryPage: (scanId: string, index: number) => void;
   usage: { used: number; limit: number };
+  /** Null until the server has answered. */
+  server: ServerStatus | null;
+  invite: string | null;
+  setInvite: (code: string) => void;
 };
+
+type PageOutcome =
+  | { kind: "pending" }
+  | { kind: "failed"; error: string; code?: string }
+  | { kind: "done"; page: MenuPage; model?: string; inputTokens?: number; outputTokens?: number };
+
+/** Compressed photos kept for this visit, so a failed page can be retried. */
+const uploads = new Map<string, Blob>();
+
+/** Recomputes a scan's name, cuisines and status from its pages. */
+function summarise(scan: Scan): Scan {
+  const pending = scan.pages.some((page) => page.status === "pending");
+  const printedName = [...scan.pages].sort((a, b) => a.index - b.index).find((page) => page.restaurantName)?.restaurantName ?? null;
+  const keepName = scan.source === "demo" || scan.customName;
+  return {
+    ...scan,
+    restaurantName: keepName ? scan.restaurantName : (printedName ?? scan.restaurantName),
+    cuisines: uniqueCuisines(scan.dishes.map((dish) => dish.cuisine)),
+    status: pending
+      ? "processing"
+      : scan.pages.some((page) => page.status === "failed")
+        ? "partial"
+        : scan.dishes.length === 0
+          ? "failed"
+          : "ready",
+  };
+}
 
 const AppStateContext = React.createContext<AppState | null>(null);
 
@@ -77,14 +121,14 @@ function readAccounts(): Record<string, Account> {
   return readJSON<Record<string, Account>>(ACCOUNTS_KEY) ?? {};
 }
 
-/** Scans interrupted by a reload can't resume: mark their unread pages failed. */
+/** Scans interrupted by a reload can't resume: their unread pages become retryable failures. */
 function settleInterrupted(scans: Scan[]): Scan[] {
   return scans.map((scan) => {
     if (scan.status !== "processing") return scan;
     const pages = scan.pages.map((page) =>
-      page.status === "pending" ? { ...page, status: "failed" as const, error: "Not analysed — re-upload" } : page,
+      page.status === "pending" ? { ...page, status: "failed" as const, error: "Not analysed — re-upload", code: "gone" } : page,
     );
-    return { ...scan, pages, status: pages.some((page) => page.status === "done") ? "partial" : "failed" };
+    return summarise({ ...scan, pages });
   });
 }
 
@@ -112,12 +156,19 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = React.useState<AccountData>(EMPTY_DATA);
   const [draft, setDraft] = React.useState<DraftPage[]>([]);
   const [persistent, setPersistent] = React.useState(true);
+  const [server, setServer] = React.useState<ServerStatus | null>(null);
+  const [invite, setInviteState] = React.useState<string | null>(null);
+  const inviteRef = React.useRef<string | null>(null);
+  const serverPromise = React.useRef<Promise<ServerStatus> | null>(null);
   const accountRef = React.useRef<PublicAccount | null>(null);
   accountRef.current = account;
 
   // Restore the session once, on the client.
   React.useEffect(() => {
     removeKey(LEGACY_KEY); // the old demo profile
+    const savedInvite = readInvite();
+    inviteRef.current = savedInvite;
+    setInviteState(savedInvite);
     setPersistent(storageIsPersistent());
     const session = readJSON<{ id: string }>(SESSION_KEY);
     const found = session ? Object.values(readAccounts()).find((entry) => entry.id === session.id) : undefined;
@@ -278,7 +329,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   );
 
   const renameScan = React.useCallback(
-    (id: string, next: string) => updateScan(id, (scan) => ({ ...scan, restaurantName: next.trim() || null })),
+    (id: string, next: string) => updateScan(id, (scan) => ({ ...scan, restaurantName: next.trim() || null, customName: Boolean(next.trim()) })),
     [updateScan],
   );
 
@@ -307,76 +358,164 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const addDraft = React.useCallback((pages: DraftPage[]) => setDraft((prev) => [...prev, ...pages].slice(0, 6)), []);
   const removeDraft = React.useCallback((id: string) => setDraft((prev) => prev.filter((page) => page.id !== id)), []);
+  // The latest scans, for callbacks that run after awaits.
+  const scansRef = React.useRef<Scan[]>([]);
+  scansRef.current = data.scans;
 
-  /** Marks one page finished and folds its dishes into the scan. */
-  const completePage = React.useCallback(
-    (scanId: string, index: number) => {
-      const page = LIVE_SCAN_PAGES[index % LIVE_SCAN_PAGES.length];
+  /** Resolves once we know whether the server can read menus with AI. */
+  const ensureServer = React.useCallback(async (): Promise<ServerStatus> => {
+    serverPromise.current ??= fetchServerStatus().then((status) => status ?? OFFLINE_STATUS);
+    const status = await serverPromise.current;
+    setServer(status);
+    return status;
+  }, []);
+
+  /** Folds one page's outcome into its scan and recomputes the scan's summary. */
+  const applyPage = React.useCallback(
+    (scanId: string, index: number, outcome: PageOutcome) =>
       updateScan(scanId, (scan) => {
-        const dishes: Dish[] = mergeDuplicates([...scan.dishes, ...toDishes(scanId, index, page.dishes)]);
-        const pages = scan.pages.map((entry) => (entry.index === index ? { index, status: "done" as const } : entry));
-        const finished = pages.every((entry) => entry.status !== "pending");
-        return {
-          ...scan,
-          dishes,
-          pages,
-          restaurantName: scan.restaurantName ?? page.restaurant_name,
-          cuisines: uniqueCuisines(dishes.map((dish) => dish.cuisine)),
-          status: finished ? (pages.some((entry) => entry.status === "failed") ? "partial" : "ready") : scan.status,
-        };
-      });
-    },
+        let dishes = scan.dishes;
+        const pages = scan.pages.map((entry): ScanPageState => {
+          if (entry.index !== index) return entry;
+          if (outcome.kind === "pending") return { index, status: "pending" };
+          if (outcome.kind === "failed") return { index, status: "failed", error: outcome.error, code: outcome.code };
+          const { page } = outcome;
+          return {
+            index,
+            status: page.is_menu ? "done" : "not_menu",
+            error: page.is_menu ? undefined : "This doesn't look like a menu page.",
+            restaurantName: page.restaurant_name,
+            notes: page.notes,
+            model: outcome.model,
+            inputTokens: outcome.inputTokens,
+            outputTokens: outcome.outputTokens,
+          };
+        });
+        if (outcome.kind === "done") {
+          const others = scan.dishes.filter((dish) => dish.pageIndex !== index);
+          dishes = mergeDuplicates([...others, ...(outcome.page.is_menu ? toDishes(scanId, index, outcome.page.dishes) : [])]);
+        }
+        return summarise({ ...scan, pages, dishes });
+      }),
     [updateScan],
+  );
+
+  /** Sends one compressed page to the AI, or reuses an earlier answer for the same photo. */
+  const readPage = React.useCallback(
+    async (scanId: string, index: number, count: number, image: Blob) => {
+      try {
+        const hash = await sha256Hex(image).catch(() => null);
+        const hit = hash ? cachedPage(hash) : null;
+        if (hit) {
+          applyPage(scanId, index, { kind: "done", page: hit.page, model: hit.model, inputTokens: 0, outputTokens: 0 });
+          return;
+        }
+        const result = await analyzePage({ image, index, count, invite: inviteRef.current });
+        if (hash && result.model !== "mock") cachePage(hash, result.page, result.model);
+        applyPage(scanId, index, { kind: "done", ...result });
+      } catch (error) {
+        applyPage(scanId, index, {
+          kind: "failed",
+          error: error instanceof ScanRequestError ? error.message : "Couldn't read this page. Retry it.",
+          code: error instanceof ScanRequestError ? error.code : "unknown",
+        });
+      }
+    },
+    [applyPage],
   );
 
   const startScan = React.useCallback(() => {
     if (draft.length === 0) return null;
     const id = `scan-${Date.now().toString(36)}`;
-    const pageCount = draft.length;
+    const pages = draft;
+    const count = pages.length;
 
     setScans((scans) => [
       {
         id,
         restaurantName: null,
         cuisines: [],
-        pageCount,
+        pageCount: count,
         status: "processing",
-        thumbnail: draft[0]?.preview ?? null,
+        thumbnail: pages[0]?.preview ?? null,
         createdAt: new Date().toISOString(),
-        pages: Array.from({ length: pageCount }, (_, index) => ({ index, status: "pending" as const })),
+        pages: pages.map((_, index) => ({ index, status: "pending" as const })),
         dishes: [],
       },
       ...scans,
     ]);
     setDraft([]);
 
-    // At most three pages in flight, like the real pipeline.
-    const queue = Array.from({ length: pageCount }, (_, index) => index);
-    const worker = async () => {
-      while (queue.length > 0) {
-        const index = queue.shift()!;
-        await sleep(2200 + index * 900);
-        completePage(id, index);
-      }
-    };
-    void Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_PAGES, pageCount) }, worker)).then(() => {
+    void (async () => {
+      const status = await ensureServer();
+      const demo = !status.ai;
+      updateScan(id, (scan) => ({ ...scan, source: demo ? "demo" : "ai", restaurantName: demo ? "Sample menu" : scan.restaurantName }));
+
+      // At most three pages in flight, like the spec's pipeline.
+      const queue = pages.map((page, index) => ({ page, index }));
+      const worker = async () => {
+        while (queue.length > 0) {
+          const { page, index } = queue.shift()!;
+          if (demo) {
+            await sleep(2200 + index * 900);
+            applyPage(id, index, { kind: "done", page: LIVE_SCAN_PAGES[index % LIVE_SCAN_PAGES.length] });
+            continue;
+          }
+          let image: Blob;
+          try {
+            image = await compressForUpload(page.file);
+          } catch {
+            applyPage(id, index, { kind: "failed", error: "Couldn't read this photo format — try a JPEG or a screenshot.", code: "bad_type" });
+            continue;
+          }
+          uploads.set(`${id}:${index}`, image);
+          await readPage(id, index, count, image);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_PAGES, count) }, worker));
       if (typeof navigator !== "undefined") navigator.vibrate?.(30);
-    });
+    })();
 
     return id;
-  }, [draft, completePage, setScans]);
+  }, [draft, setScans, ensureServer, updateScan, applyPage, readPage]);
 
   const retryPage = React.useCallback(
     (scanId: string, index: number) => {
-      updateScan(scanId, (scan) => ({
-        ...scan,
-        status: "processing",
-        pages: scan.pages.map((entry) => (entry.index === index ? { index, status: "pending" as const } : entry)),
-      }));
-      void sleep(2400).then(() => completePage(scanId, index));
+      const scan = scansRef.current.find((entry) => entry.id === scanId);
+      if (!scan) return;
+      if (scan.source === "demo") {
+        applyPage(scanId, index, { kind: "pending" });
+        void sleep(2400).then(() =>
+          applyPage(scanId, index, { kind: "done", page: LIVE_SCAN_PAGES[index % LIVE_SCAN_PAGES.length] }),
+        );
+        return;
+      }
+      const image = uploads.get(`${scanId}:${index}`);
+      if (!image) {
+        applyPage(scanId, index, {
+          kind: "failed",
+          error: "This photo isn't kept after the app closes. Scan this page again.",
+          code: "gone",
+        });
+        return;
+      }
+      applyPage(scanId, index, { kind: "pending" });
+      void readPage(scanId, index, scan.pageCount, image);
     },
-    [updateScan, completePage],
+    [applyPage, readPage],
   );
+
+  // Ask the server once whether it can read menus, so Home can say so up front.
+  React.useEffect(() => {
+    if (status === "signed-in") void ensureServer();
+  }, [status, ensureServer]);
+
+  const setInvite = React.useCallback((code: string) => {
+    writeInvite(code);
+    inviteRef.current = code.trim();
+    setInviteState(code.trim());
+  }, []);
+
 
   const today = istDay(new Date());
   const used = data.scans.filter((scan) => istDay(scan.createdAt) === today).reduce((sum, scan) => sum + scan.pageCount, 0);
@@ -409,8 +548,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       startScan,
       retryPage,
       usage: { used, limit: DAILY_PAGE_LIMIT },
+      server,
+      invite,
+      setInvite,
     }),
-    [status, account, persistent, signUp, signIn, signOut, updateName, changePassword, resetPassword, deleteAccount, data, setOnboarded, setPrefs, rateDish, removeFeedback, renameScan, deleteScan, draft, addDraft, removeDraft, startScan, retryPage, used],
+    [status, account, persistent, signUp, signIn, signOut, updateName, changePassword, resetPassword, deleteAccount, data, setOnboarded, setPrefs, rateDish, removeFeedback, renameScan, deleteScan, draft, addDraft, removeDraft, startScan, retryPage, used, server, invite, setInvite],
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

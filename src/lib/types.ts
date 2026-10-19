@@ -61,6 +61,14 @@ export type ScanPageState = {
   index: number;
   status: PageStatus;
   error?: string;
+  /** Why it failed, for choosing the fix (e.g. "invite_required"). */
+  code?: string;
+  /** The name printed on this page, if any. */
+  restaurantName?: string | null;
+  notes?: string | null;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 export type ScanStatus = "processing" | "ready" | "partial" | "failed";
@@ -76,6 +84,10 @@ export type Scan = {
   createdAt: string;
   pages: ScanPageState[];
   dishes: Dish[];
+  /** "ai" = read by Claude; "demo" = sample menus because AI isn't connected. */
+  source?: "ai" | "demo";
+  /** Set once the diner renames the scan, so page results don't overwrite it. */
+  customName?: boolean;
 };
 
 export type TastePreference = {

@@ -29,7 +29,14 @@ export function RequireAccount({
 }) {
   const router = useRouter();
   const { status, onboarded } = useAppState();
-  const target = status === "signed-out" ? "/login" : status === "signed-in" && !onboarded && !onboarding ? "/onboarding" : null;
+  const target =
+    status === "signed-out"
+      ? "/login"
+      : status === "signed-in" && !onboarded && !onboarding
+        ? "/onboarding"
+        : status === "signed-in" && onboarded && onboarding
+          ? "/"
+          : null;
 
   React.useEffect(() => {
     if (target) router.replace(target);
